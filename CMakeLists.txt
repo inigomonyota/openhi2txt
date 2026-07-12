@@ -51,8 +51,8 @@ endif()
 
 set(OPENHI2TXT_BUNDLED_ZLIB_DIR "${OPENHI2TXT_THIRDPARTY_DIR}/zlib-static")
 set(OPENHI2TXT_BUNDLED_ZLIB_INCLUDE "${OPENHI2TXT_BUNDLED_ZLIB_DIR}/include")
-set(OPENHI2TXT_BUNDLED_ZLIB_LIB "${OPENHI2TXT_BUNDLED_ZLIB_DIR}/lib/zs.lib")
-set(OPENHI2TXT_BUNDLED_MINIZIP_LIB "${OPENHI2TXT_BUNDLED_ZLIB_DIR}/lib/minizip.lib")
+set(OPENHI2TXT_BUNDLED_ZLIB_LIB "${OPENHI2TXT_BUNDLED_ZLIB_DIR}/lib/msvc-x64-md/zs.lib")
+set(OPENHI2TXT_BUNDLED_MINIZIP_LIB "${OPENHI2TXT_BUNDLED_ZLIB_DIR}/lib/msvc-x64-md/minizip.lib")
 
 if(WIN32 AND MSVC)
     if(NOT EXISTS "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}/zlib.h"
@@ -62,7 +62,8 @@ if(WIN32 AND MSVC)
         message(FATAL_ERROR
             "Windows/MSVC builds expect static zlib and minizip under "
             "thirdparty/zlib-static. Required layout: include/zlib.h, "
-            "include/minizip/unzip.h, lib/zs.lib, and lib/minizip.lib."
+            "include/minizip/unzip.h, lib/msvc-x64-md/zs.lib, and "
+            "lib/msvc-x64-md/minizip.lib."
         )
     endif()
 

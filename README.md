@@ -62,8 +62,8 @@ cmake --preset windows-msvc
 cmake --build --preset windows-msvc
 ```
 
-The Windows/MSVC build uses static zlib/minizip files under
-`thirdparty/zlib-static`. No zlib DLL is copied or required.
+The Windows/MSVC x64 build uses `/MD` static zlib/minizip files under
+`thirdparty/zlib-static/lib/msvc-x64-md`. No zlib DLL is copied or required.
 
 Windows with Ninja:
 
@@ -84,7 +84,9 @@ find minizip automatically, pass `MINIZIP_INCLUDE_DIR` and `MINIZIP_LIBRARY`.
 
 Third-party notes:
 - rapidxml is header-only and bundled under `thirdparty/rapidxml-1.13`.
-- Windows/MSVC expects static zlib/minizip under `thirdparty/zlib-static`.
+- Windows/MSVC x64 expects `/MD` static zlib/minizip under
+  `thirdparty/zlib-static/lib/msvc-x64-md`.
 - Linux expects zlib/minizip from the system or explicit CMake paths.
-
+- Dependency licenses and source details are listed in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

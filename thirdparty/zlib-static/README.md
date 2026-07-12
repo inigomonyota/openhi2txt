@@ -16,10 +16,14 @@ thirdparty/zlib-static/
       ioapi.h
       ...
   lib/
-    zs.lib
-    minizip.lib
+    msvc-x64-md/
+      zs.lib
+      minizip.lib
 ```
 
 Build both libraries with the same MSVC runtime setting used by OpenHi2txt and
 most consuming applications: static libraries using the dynamic MSVC runtime
 (`/MD`), not `/MT`.
+
+These prebuilt libraries are specifically for MSVC x64 `/MD` builds. Linux and
+other toolchains use system zlib and minizip instead.
