@@ -27,7 +27,7 @@ static fs::path resolveInputPath(const fs::path& mameRoot,
                                  const Structure& s) {
     const std::string kind = Utils::trim(s.fileKind.empty() ? ".hi" : s.fileKind);
 
-    if (kind == ".hi") {
+    if (kind == ".hi" || Utils::ieq(kind, "hi")) {
         return mameRoot / "hiscore" / (requestedGame + ".hi");
     }
 
@@ -80,7 +80,7 @@ static void appendXmlEscaped(std::ostringstream& out, const std::string& s) {
                 break;
             }
             case '<': out << "&lt;"; break;
-            case '>': out << "&gt;"; break;
+            case '>': out << '>'; break;
             case '"': out << "&quot;"; break;
             case '\'': out << "&apos;"; break;
             default: out << c; break;
@@ -92,7 +92,7 @@ static std::string renderResultXml(const HiScoreResult& result) {
     std::ostringstream out;
     out << "<hi2txt>\n";
 
-    for (const auto& table : result.tables) {
+    auto appendTable = [&](const HiScoreTable& table) {
         if (!table.id.empty()) {
             out << "  <table id=\"";
             appendXmlEscaped(out, table.id);
@@ -121,14 +121,27 @@ static std::string renderResultXml(const HiScoreResult& result) {
         }
 
         out << "  </table>\n";
-    }
+    };
 
-    for (const auto& field : result.fields) {
+    auto appendField = [&](const HiScoreField& field) {
         out << "  <field id=\"";
         appendXmlEscaped(out, field.id);
         out << "\">";
         appendXmlEscaped(out, field.value);
         out << "</field>\n";
+    };
+
+    if (!result.outputOrder.empty()) {
+        for (const auto& item : result.outputOrder) {
+            if (item.kind == HiScoreOutputKind::Table && item.index < result.tables.size())
+                appendTable(result.tables[item.index]);
+            else if (item.kind == HiScoreOutputKind::Field && item.index < result.fields.size())
+                appendField(result.fields[item.index]);
+        }
+    }
+    else {
+        for (const auto& table : result.tables) appendTable(table);
+        for (const auto& field : result.fields) appendField(field);
     }
 
     out << "</hi2txt>\n";
@@ -153,6 +166,7 @@ static bool parseScoreXml(const std::string& gameName,
     catch (const std::exception& e) {
         result.ok = false;
         result.error = e.what();
+        result.errorKind = HiScoreErrorKind::ScoreXmlInvalid;
         return false;
     }
 
@@ -160,6 +174,7 @@ static bool parseScoreXml(const std::string& gameName,
     if (!root) {
         result.ok = false;
         result.error = "Default score XML has no hi2txt root";
+        result.errorKind = HiScoreErrorKind::ScoreXmlInvalid;
         return false;
     }
 
@@ -191,6 +206,20 @@ static bool parseScoreXml(const std::string& gameName,
         field.source = field.id;
         field.display = DisplayLevel::Always;
         result.fields.push_back(std::move(field));
+    }
+
+    size_t tableIndex = 0;
+    size_t fieldIndex = 0;
+    for (auto* item = root->first_node(); item; item = item->next_sibling()) {
+        const std::string name(item->name(), item->name_size());
+        if (Utils::ieq(name, "table") && tableIndex < result.tables.size()) {
+            result.outputOrder.push_back(
+                HiScoreOutputItem{ HiScoreOutputKind::Table, tableIndex++ });
+        }
+        else if (Utils::ieq(name, "field") && fieldIndex < result.fields.size()) {
+            result.outputOrder.push_back(
+                HiScoreOutputItem{ HiScoreOutputKind::Field, fieldIndex++ });
+        }
     }
 
     result.ok = true;
@@ -315,6 +344,7 @@ HiScoreResult Context::readGame(const std::string& gameName,
                 cached.ok = false;
                 cached.game = gameName;
                 cached.error = decodeError;
+                cached.errorKind = HiScoreErrorKind::ConfigurationError;
                 cached.usedInputPath = cachePath.string();
                 cached.source = ScoreSource::SavedCache;
                 return cached;
@@ -336,6 +366,7 @@ HiScoreResult Context::readGame(const std::string& gameName,
             if (defaultMisses_.find(cacheKey) != defaultMisses_.end()) {
                 result.ok = false;
                 result.error = "No saved or default score XML found for " + gameName;
+                result.errorKind = HiScoreErrorKind::ScoreXmlNotFound;
                 result.source = ScoreSource::None;
                 return result;
             }
@@ -351,6 +382,7 @@ HiScoreResult Context::readGame(const std::string& gameName,
                 fallback.source = ScoreSource::DefaultFallback;
                 fallback.usedInputPath = options_.defaultsZip;
                 fallback.error = decodeError;
+                fallback.errorKind = HiScoreErrorKind::ConfigurationError;
                 return fallback;
             }
 
@@ -372,6 +404,7 @@ HiScoreResult Context::readGame(const std::string& gameName,
 
     result.ok = false;
     result.error = "No saved or default score XML found for " + gameName;
+    result.errorKind = HiScoreErrorKind::ScoreXmlNotFound;
     result.source = ScoreSource::None;
     return result;
 }
@@ -448,6 +481,7 @@ HiScoreResult Context::refreshGame(const std::string& gameName,
     if (!defRes.ok) {
         result.ok = false;
         result.error = defRes.error;
+        result.errorKind = defRes.errorKind;
         return result;
     }
 
@@ -455,6 +489,7 @@ HiScoreResult Context::refreshGame(const std::string& gameName,
     if (!inRes.ok) {
         result.ok = false;
         result.error = inRes.error;
+        result.errorKind = inRes.errorKind;
         result.usedDefinition = defRes.usedDefId;
         result.source = ScoreSource::None;
         return result;

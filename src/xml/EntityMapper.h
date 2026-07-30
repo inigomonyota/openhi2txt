@@ -37,7 +37,7 @@ namespace openhi2txt {
 
                 // Punctuation & Icons
                 {"three-dots", "\u2026"}, {"two-exclamations", "\u203C"}, {"broken-question", "\u2049"},
-                {"asterism", "\u2052"}, {"w-double-strike", "\u20A9"}, {"square-2", "\u20DE"},
+                {"asterism", "\u2042"}, {"w-double-strike", "\u20A9"}, {"square-2", "\u20DE"},
 
                 // Roman Numerals (Upper)
                 {"roman-numeral-1", "\u2160"}, {"roman-numeral-2", "\u2161"}, {"roman-numeral-3", "\u2162"},
@@ -116,8 +116,33 @@ namespace openhi2txt {
                 {"jp-k-height", "\u516B"}, {"jp-k-nine", "\u4E5D"},
 
                 // Special UI/Game Icons
-                {"thumbs-up", "\u2713"}, {"feet", "\U0001F43E"}, {"heart-with-arrow", "\u2665"},
-                {"mans-symbol", "\u2642"}, {"womens-symbol", "\u2640"}
+                {"thumbs-up", "\u221A"}, {"feet", "\U0001F43E"}, {"heart-with-arrow", "\u2665"},
+                {"mans-symbol", "\u2642"}, {"mens-symbol", "\u2642"}, {"womens-symbol", "\u2640"},
+
+                // Additional entities declared by the official hi2txt.dtd
+                {"jp-h-handakuten", "\u309C"}, {"jp-h-dakuten", "\u309B"},
+                {"jp-h-youon-a", "\u3083"}, {"jp-h-youon-u", "\u3085"}, {"jp-h-youon-o", "\u3087"},
+                {"spaceship", "\u2646"}, {"headset", "\u260A"},
+                {"aries", "\u2648"}, {"taurus", "\u2649"}, {"gemini", "\u264A"},
+                {"cancer", "\u264B"}, {"leo", "\u264C"}, {"virgo", "\u264D"},
+                {"libra", "\u264E"}, {"scorpio", "\u264F"}, {"sagitarius", "\u2650"},
+                {"capricorn", "\u2651"}, {"aquarius", "\u2652"}, {"pisces", "\u2653"},
+                {"left-foot", "\u2308"}, {"right-foot", "\u2308"},
+                {"airplane", "\u2708"}, {"scissors", "\u2704"},
+                {"black-right-arrow-large", "\u27A8"}, {"crossed-swords", "\u2694"},
+                {"car-side", "\u26D0"}, {"car-front", "\u26D0"},
+                {"cross-of-jerusalem", "\u2629"}, {"cross-of-lorraine", "\u2628"},
+                {"multiplication", "\u2715"}, {"two-cubes", "\u25EB"},
+                {"four-lines", "\u2263"}, {"round-7", "\u2466"},
+                {"cat-face", "\u263A"}, {"big-dot", "\u2022"}, {"amber", "\u2658"},
+                {"big-exclamation", "\u2762"}, {"two-dots", "\u0589"},
+                {"inverted-question", "\u061F"}, {"baseball", "\u26BE"},
+                {"snowman", "\u2603"}, {"umbrella", "\u2602"},
+                {"three-mid-dots", "\u22EF"}, {"boat", "\u26F5"},
+                {"kiss", "\u263A"}, {"rdquo", "\u201D"},
+                {"slash-in-square", "\u25A7"}, {"antislash-in-square", "\u25A8"},
+                {"h-lines-in-square", "\u25A4"},
+                {"lama", "x"}, {"whale", "x"}, {"shoe", "x"}
             };
 
             std::string result = text;

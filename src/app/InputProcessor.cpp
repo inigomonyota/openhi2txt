@@ -33,7 +33,7 @@ static fs::path resolveInputPath(const fs::path& mameRoot,
     const std::string kind = Utils::trim(s.fileKind.empty() ? ".hi" : s.fileKind);
 
     // default: hiscore/<game>.hi
-    if (kind == ".hi") {
+    if (kind == ".hi" || Utils::ieq(kind, "hi")) {
         if (!explicitInputPath.empty()) return explicitInputPath;
         return mameRoot / "hiscore" / (requestedGame + ".hi");
     }
@@ -47,10 +47,6 @@ static fs::path resolveInputPath(const fs::path& mameRoot,
     return mameRoot / "hiscore" / (requestedGame + kind);
 }
 
-static std::string normalizedFileKind(const Structure& s) {
-    return Utils::trim(s.fileKind.empty() ? ".hi" : s.fileKind);
-}
-
 } // namespace
 
 InputProcessResult InputProcessor::process(const fs::path& mameRoot,
@@ -59,6 +55,7 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
     const fs::path& explicitInputPath,
     const TraceSink* trace) {
     InputProcessResult res;
+    bool foundInputFile = false;
 
     if (trace) {
         for (const auto& s : def.structures) {
@@ -67,25 +64,12 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
         }
     }
 
-    std::string seedKind;
     for (const auto& s : def.structures) {
-        fs::path p = resolveInputPath(mameRoot, requestedGame, s, explicitInputPath);
-        if (fs::exists(p)) {
-            seedKind = normalizedFileKind(s);
-            break;
-        }
-    }
-
-    for (const auto& s : def.structures) {
-        const std::string kind = normalizedFileKind(s);
-        if (!seedKind.empty() && seedKind != ".hi" && !Utils::ieq(kind, seedKind)) {
-            continue;
-        }
-
         fs::path p = resolveInputPath(mameRoot, requestedGame, s, explicitInputPath);
 
         std::vector<uint8_t> raw;
         if (!Utils::readFileBytes(p, raw)) continue;
+        foundInputFile = true;
 
         const bool hasDefinitionChecks = !s.checkAll.empty() || !s.checkAny.empty();
 
@@ -124,19 +108,25 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
         try {
             std::vector<uint8_t> bytes = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
             res.ok = true;
-            if (res.inputPath.empty()) res.inputPath = p;
-            res.outputId = s.outputId;
+            if (res.inputPath.empty()) {
+                res.inputPath = p;
+                res.outputId = s.outputId;
+            }
             if (trace) trace->line("TRACE: data taken from file: " + p.string());
             mergeRows(res.rows, Processor::extractRows(bytes, s, def, trace));
         }
         catch (const std::exception& e) {
             res.ok = false;
+            res.errorKind = HiScoreErrorKind::InvalidData;
             res.error = e.what();
             return res;
         }
     }
 
     if (!res.ok) {
+        res.errorKind = foundInputFile
+            ? HiScoreErrorKind::StructureNotMatched
+            : HiScoreErrorKind::InputNotFound;
         res.error = "No matching structure found under " + mameRoot.string();
     }
     return res;

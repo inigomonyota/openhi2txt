@@ -10,10 +10,10 @@ namespace {
 static void printXml(const HiScoreResult& result) {
     std::printf("<hi2txt>\n");
 
-    for (const auto& tab : result.tables) {
+    auto printTable = [](const HiScoreTable& tab) {
         if (!tab.id.empty()) {
             std::printf("  <table id=\"");
-            Utils::xmlEscapePrintPreserveEntities(tab.id);
+            Utils::xmlEscapePrintPreserveEntities(tab.id, true);
             std::printf("\">\n");
         }
         else {
@@ -39,14 +39,27 @@ static void printXml(const HiScoreResult& result) {
         }
 
         std::printf("  </table>\n");
-    }
+    };
 
-    for (const auto& f : result.fields) {
+    auto printField = [](const HiScoreField& f) {
         std::printf("  <field id=\"");
-        Utils::xmlEscapePrintPreserveEntities(f.id);
+        Utils::xmlEscapePrintPreserveEntities(f.id, true);
         std::printf("\">");
         Utils::xmlEscapePrintPreserveEntities(f.value);
         std::printf("</field>\n");
+    };
+
+    if (!result.outputOrder.empty()) {
+        for (const auto& item : result.outputOrder) {
+            if (item.kind == HiScoreOutputKind::Table && item.index < result.tables.size())
+                printTable(result.tables[item.index]);
+            else if (item.kind == HiScoreOutputKind::Field && item.index < result.fields.size())
+                printField(result.fields[item.index]);
+        }
+    }
+    else {
+        for (const auto& tab : result.tables) printTable(tab);
+        for (const auto& f : result.fields) printField(f);
     }
 
     std::printf("</hi2txt>\n");
@@ -55,13 +68,18 @@ static void printXml(const HiScoreResult& result) {
 static void printPipeLine(const std::vector<std::string>& cells) {
     for (size_t i = 0; i < cells.size(); ++i) {
         if (i > 0) std::printf("|");
-        std::printf("%s", cells[i].c_str());
+        // A literal pipe inside a cell would be indistinguishable from the
+        // text table delimiter. Official hi2txt renders it as an uppercase I;
+        // keep the original value for XML and library consumers.
+        for (unsigned char ch : cells[i]) {
+            std::putchar(ch == (unsigned char)'|' ? 'I' : (int)ch);
+        }
     }
     std::printf("\n");
 }
 
 static void printText(const HiScoreResult& result) {
-    for (const auto& tab : result.tables) {
+    auto printTable = [](const HiScoreTable& tab) {
         if (!tab.id.empty()) {
             std::printf("# %s\n", tab.id.c_str());
         }
@@ -71,10 +89,23 @@ static void printText(const HiScoreResult& result) {
             printPipeLine(row);
         }
         std::printf("\n");
-    }
+    };
 
-    for (const auto& f : result.fields) {
+    auto printField = [](const HiScoreField& f) {
         std::printf("%s\n%s\n\n", f.id.c_str(), f.value.c_str());
+    };
+
+    if (!result.outputOrder.empty()) {
+        for (const auto& item : result.outputOrder) {
+            if (item.kind == HiScoreOutputKind::Table && item.index < result.tables.size())
+                printTable(result.tables[item.index]);
+            else if (item.kind == HiScoreOutputKind::Field && item.index < result.fields.size())
+                printField(result.fields[item.index]);
+        }
+    }
+    else {
+        for (const auto& tab : result.tables) printTable(tab);
+        for (const auto& f : result.fields) printField(f);
     }
 }
 

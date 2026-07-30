@@ -104,7 +104,7 @@ static std::vector<std::string> splitFormatChain(const std::string& chain) {
 static bool isInlineFormatToken(const std::string& tok) {
     if (tok.empty()) return true;
     const char c0 = tok[0];
-    if (c0 == '+' || c0 == '-' || c0 == '*' || c0 == '/' || c0 == 'x' || c0 == 'X') return true;
+    if (c0 == '+' || c0 == '-' || c0 == '*' || c0 == '/' || c0 == 'x' || c0 == 'X' || c0 == '>') return true;
     if (tok.rfind("<<", 0) == 0 || tok.rfind(">>", 0) == 0) return true;
     if (tok.rfind("0x", 0) == 0 || tok.rfind("0X", 0) == 0) return true;
     if (Utils::ieq(tok, "TrimL0") || Utils::ieq(tok, "TrimR") || Utils::ieq(tok, "Trim ") || Utils::ieq(tok, "trim")) return true;
@@ -173,50 +173,95 @@ static bool rowRelevantToTable(const GameDef& def,
     const Table& tab,
     const std::unordered_map<std::string, Value>& row,
     const ReadOptions& options) {
-    bool hasNonIndexVisible = false;
-    for (const auto& col : tab.cols) {
-        if (!displayAllowed(col.display, options)) continue;
-        const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
-        if (!Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
-            hasNonIndexVisible = true;
-            break;
-        }
-    }
-    if (!hasNonIndexVisible) return true;
-
     auto colHasData = [&](const Column& col) -> bool {
         const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
+        Value value = std::monostate{};
+        bool sourcePresent = false;
 
         if (!src.empty() && !Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
             auto it = row.find(src);
-            if (it != row.end() && !valueEmpty(it->second)) return true;
-        }
-
-        if (!col.format.empty()) {
-            auto deps = collectFormatDeps(def.formats, col.format);
-            for (const auto& dep : deps) {
-                auto it2 = row.find(dep);
-                if (it2 != row.end() && !valueEmpty(it2->second)) return true;
+            if (it != row.end()) {
+                value = it->second;
+                sourcePresent = true;
             }
         }
 
-        return false;
+        if (!col.format.empty()) {
+            if (!sourcePresent) {
+                bool synthesizesEmpty = false;
+                for (const auto& token : splitFormatChain(col.format)) {
+                    auto format = def.formats.find(token);
+                    if (format == def.formats.end()) continue;
+                    for (const auto& caseMap : format->second.cases) {
+                        if (caseMap.isDefault || caseMap.src.empty()) {
+                            synthesizesEmpty = true;
+                            break;
+                        }
+                    }
+                    if (synthesizesEmpty) break;
+                }
+                if (!synthesizesEmpty) {
+                    const auto dependencies = collectFormatDeps(def.formats, col.format);
+                    for (const auto& dependency : dependencies) {
+                        if (row.find(dependency) != row.end()) {
+                            synthesizesEmpty = true;
+                            break;
+                        }
+                    }
+                }
+                if (!synthesizesEmpty) return false;
+            }
+            auto mutableRow = row;
+            value = Formatter::apply(def.formats, col.format, mutableRow, value);
+        }
+
+        return sourcePresent || !Utils::valueToString(value).empty();
     };
 
+    // The normal-output columns define row population even when extra/debug
+    // columns are enabled. Only fall back to conditional columns when there
+    // is no ordinary non-index column.
+    const Column* rangeColumn = nullptr;
     for (const auto& col : tab.cols) {
-        if (!displayAllowed(col.display, options)) continue;
         const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
         if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
-        if (!colHasData(col)) return false;
-        break;
+        if (col.display.empty()) {
+            rangeColumn = &col;
+            break;
+        }
+    }
+    if (!rangeColumn) {
+        for (const auto& col : tab.cols) {
+            const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
+            if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
+            if (displayAllowed(col.display, options)) {
+                rangeColumn = &col;
+                break;
+            }
+        }
+    }
+    if (!rangeColumn) {
+        for (const auto& col : tab.cols) {
+            const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
+            if (!Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
+                rangeColumn = &col;
+                break;
+            }
+        }
+    }
+    if (!rangeColumn) return true;
+    if (colHasData(*rangeColumn)) return true;
+
+    // A line-ignore rule can make a later field the authoritative row
+    // sentinel (Tempest stores its final score without a name).
+    if (!tab.ignoreRules.empty()) {
+        for (const auto& col : tab.cols) {
+            const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
+            if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
+            if (displayAllowed(col.display, options) && colHasData(col)) return true;
+        }
     }
 
-    for (const auto& col : tab.cols) {
-        if (!displayAllowed(col.display, options)) continue;
-        const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
-        if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
-        if (colHasData(col)) return true;
-    }
     return false;
 }
 
@@ -227,34 +272,41 @@ static bool rowShouldIgnore(const Table& tab,
     if (tab.ignoreRules.empty()) return false;
 
     auto matchRule = [&](const IgnoreRule& r) -> bool {
-        auto it = row.find(r.colId);
-        Value v = (it != row.end()) ? it->second : Value{};
-
-        if (it == row.end()) {
-            for (const auto& col : tab.cols) {
-                if (!Utils::ieq(col.id, r.colId)) continue;
-
-                const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
-                if (Utils::ieq(src, "index")) {
-                    v = (int64_t)rowIdx;
-                }
-                else if (Utils::ieq(src, "unsorted_index")) {
-                    auto ui = row.find(kUnsortedIndexKey);
-                    v = (ui != row.end()) ? ui->second : Value((int64_t)rowIdx);
-                }
-                else {
-                    auto srcIt = row.find(src);
-                    if (srcIt != row.end()) v = srcIt->second;
-                }
-
-                if (!col.format.empty()) {
-                    v = Formatter::apply(formats, col.format,
-                        const_cast<std::unordered_map<std::string, Value>&>(row),
-                        v,
-                        (int)rowIdx);
-                }
+        Value v = std::monostate{};
+        const Column* outputColumn = nullptr;
+        for (const auto& col : tab.cols) {
+            if (Utils::ieq(col.id, r.colId)) {
+                outputColumn = &col;
                 break;
             }
+        }
+
+        if (outputColumn) {
+            const std::string src = Utils::trim(outputColumn->src).empty()
+                ? outputColumn->id
+                : outputColumn->src;
+            if (Utils::ieq(src, "index")) {
+                v = (int64_t)rowIdx;
+            }
+            else if (Utils::ieq(src, "unsorted_index")) {
+                auto ui = row.find(kUnsortedIndexKey);
+                v = (ui != row.end()) ? ui->second : Value((int64_t)rowIdx);
+            }
+            else {
+                auto srcIt = row.find(src);
+                if (srcIt != row.end()) v = srcIt->second;
+            }
+
+            if (!outputColumn->format.empty()) {
+                v = Formatter::apply(formats, outputColumn->format,
+                    const_cast<std::unordered_map<std::string, Value>&>(row),
+                    v,
+                    (int)rowIdx);
+            }
+        }
+        else {
+            auto it = row.find(r.colId);
+            if (it != row.end()) v = it->second;
         }
 
         if (!r.value.empty() && r.value[0] == '#') {
@@ -275,6 +327,8 @@ static bool rowShouldIgnore(const Table& tab,
                 if (tab.ignoreCompareOp == "!=") return a != b;
                 if (tab.ignoreCompareOp == "=" || Utils::ieq(tab.ignoreCompareOp, "==")) return a == b;
             }
+            if (tab.ignoreCompareOp == "!=") return !Utils::ieq(got, r.value);
+            if (tab.ignoreCompareOp == "=" || Utils::ieq(tab.ignoreCompareOp, "==")) return Utils::ieq(got, r.value);
         }
         return Utils::ieq(got, r.value);
     };
@@ -498,7 +552,14 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
         };
 
     bool emittedTable = false;
-    for (const auto& tab : out->tables) {
+    const size_t missingIndex = (size_t)-1;
+    std::vector<size_t> renderedTableIndices(out->tables.size(), missingIndex);
+    std::vector<size_t> renderedFieldIndices(out->fields.size(), missingIndex);
+
+    for (size_t tableDefinitionIndex = 0;
+         tableDefinitionIndex < out->tables.size();
+         ++tableDefinitionIndex) {
+        const auto& tab = out->tables[tableDefinitionIndex];
         if (options.keepFirstTable && emittedTable) break;
         if (!displayAllowed(tab.display, options)) continue;
 
@@ -519,6 +580,27 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             auto rowCopy = r;
             rowCopy[kUnsortedIndexKey] = (int64_t)i;
             filtered.push_back(std::move(rowCopy));
+        }
+
+        // Explicit field operands may refer to an element outside a loop.
+        // Make only those referenced fields available on every table row.
+        if (!rows.empty()) {
+            std::unordered_set<std::string> globalOperandIds;
+            for (const auto& formatEntry : def.formats) {
+                for (const auto& op : formatEntry.second.mathOps) {
+                    if (op.hasReference && !op.reference.id.empty()) {
+                        globalOperandIds.insert(op.reference.id);
+                    }
+                }
+            }
+            for (auto& filteredRow : filtered) {
+                for (const auto& id : globalOperandIds) {
+                    auto field = rows.front().find(id);
+                    if (field != rows.front().end() && filteredRow.find(id) == filteredRow.end()) {
+                        filteredRow[id] = field->second;
+                    }
+                }
+            }
         }
 
         if (!tab.sortKey.empty()) {
@@ -546,6 +628,27 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
                     groupStart = groupEnd;
                 }
             }
+        }
+
+        // A single-column <sum> is used by the official definitions for
+        // whole-table totals (for example KOF 2001 win percentages).
+        for (const auto& formatEntry : def.formats) {
+            const FormatDef& format = formatEntry.second;
+            if (format.sumCols.size() != 1) continue;
+            const FormatColRef& ref = format.sumCols.front();
+            int64_t total = 0;
+            for (auto& aggregateRow : filtered) {
+                auto valueIt = aggregateRow.find(ref.id);
+                if (valueIt == aggregateRow.end()) continue;
+                Value aggregateValue = valueIt->second;
+                if (!ref.format.empty()) {
+                    aggregateValue = Formatter::apply(
+                        def.formats, ref.format, aggregateRow, aggregateValue);
+                }
+                total += Utils::valueToInt(aggregateValue);
+            }
+            const std::string key = "__hi2txt_global_sum:" + format.id;
+            for (auto& aggregateRow : filtered) aggregateRow[key] = total;
         }
 
         if (!tab.ignoreRules.empty()) {
@@ -610,12 +713,16 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
         }
 
         if (!renderedTable.rows.empty()) {
+            renderedTableIndices[tableDefinitionIndex] = result.tables.size();
             result.tables.push_back(std::move(renderedTable));
             emittedTable = true;
         }
     }
 
-    for (const auto& f : out->fields) {
+    for (size_t fieldDefinitionIndex = 0;
+         fieldDefinitionIndex < out->fields.size();
+         ++fieldDefinitionIndex) {
+        const auto& f = out->fields[fieldDefinitionIndex];
         if (!displayAllowed(f.display, options)) continue;
         if (!options.keepFields.empty() && !containsCi(options.keepFields, f.id)) continue;
         if (containsCi(options.hideFields, f.id)) continue;
@@ -635,6 +742,20 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             if (it != row0.end()) v = it->second;
         }
 
+        const bool sourcePresent =
+            Utils::ieq(src, "index") || row0.find(src) != row0.end();
+        if (!sourcePresent) {
+            bool synthesizesFromRow = false;
+            const auto dependencies = collectFormatDeps(def.formats, f.format);
+            for (const auto& dependency : dependencies) {
+                if (row0.find(dependency) != row0.end()) {
+                    synthesizesFromRow = true;
+                    break;
+                }
+            }
+            if (!synthesizesFromRow) continue;
+        }
+
         if (!f.format.empty()) {
             auto tmp = row0;
             v = Formatter::apply(def.formats, f.format, tmp, v, 0);
@@ -644,13 +765,34 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
         if (Utils::ieq(f.id, "SCORE")) {
             value = groupScoreValue(value, options);
         }
+        // Official hi2txt traces an enabled standalone field but does not
+        // serialize it when formatting leaves an empty value.
+        if (value.empty()) continue;
 
+        renderedFieldIndices[fieldDefinitionIndex] = result.fields.size();
         result.fields.push_back(HiScoreField{
             f.id,
             value,
             src,
             displayLevelOf(f.display)
         });
+    }
+
+    for (const auto& item : out->items) {
+        if (item.kind == OutputItemKind::Table) {
+            if (item.index >= renderedTableIndices.size()) continue;
+            const size_t renderedIndex = renderedTableIndices[item.index];
+            if (renderedIndex == missingIndex) continue;
+            result.outputOrder.push_back(
+                HiScoreOutputItem{ HiScoreOutputKind::Table, renderedIndex });
+        }
+        else {
+            if (item.index >= renderedFieldIndices.size()) continue;
+            const size_t renderedIndex = renderedFieldIndices[item.index];
+            if (renderedIndex == missingIndex) continue;
+            result.outputOrder.push_back(
+                HiScoreOutputItem{ HiScoreOutputKind::Field, renderedIndex });
+        }
     }
 
     return result;

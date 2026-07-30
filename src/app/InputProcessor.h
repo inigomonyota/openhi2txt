@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.h"
+#include "openhi2txt/openhi2txt.h"
 #include <filesystem>
 #include <unordered_map>
 #include <vector>
@@ -15,6 +16,7 @@ struct InputProcessResult {
     std::filesystem::path inputPath;
     bool ok = false;
     std::string error;
+    HiScoreErrorKind errorKind = HiScoreErrorKind::None;
 };
 
 class InputProcessor {

@@ -29,6 +29,6 @@ int64_t valueToInt(const Value& v);
 bool readFileBytes(const std::filesystem::path& p, std::vector<uint8_t>& out);
 
 // XML escape helper (preserve &name; entities)
-void xmlEscapePrintPreserveEntities(const std::string& s);
+void xmlEscapePrintPreserveEntities(const std::string& s, bool attributeValue = false);
 
 } // namespace openhi2txt::Utils

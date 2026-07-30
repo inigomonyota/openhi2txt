@@ -224,6 +224,32 @@ result.fields
 result.warnings
 ```
 
+Failures also expose a stable category in addition to the human-readable
+message:
+
+```cpp
+if (!result.ok) {
+    result.errorKind; // openhi2txt::HiScoreErrorKind
+    result.error;
+}
+```
+
+Available categories are:
+
+```cpp
+openhi2txt::HiScoreErrorKind::None
+openhi2txt::HiScoreErrorKind::DefinitionNotFound
+openhi2txt::HiScoreErrorKind::DefinitionInvalid
+openhi2txt::HiScoreErrorKind::StructureNotMatched
+openhi2txt::HiScoreErrorKind::OutputNotFound
+openhi2txt::HiScoreErrorKind::InputNotFound
+openhi2txt::HiScoreErrorKind::InvalidData
+openhi2txt::HiScoreErrorKind::ScoreXmlNotFound
+openhi2txt::HiScoreErrorKind::ScoreXmlInvalid
+openhi2txt::HiScoreErrorKind::ConfigurationError
+openhi2txt::HiScoreErrorKind::Unknown
+```
+
 Tables preserve multi-page/multi-table output:
 
 ```cpp

@@ -143,19 +143,27 @@ int App::run(int argc, char** argv) {
     auto defRes = DefResolver::loadFromZip(args.defsZip, args.mameRoot, args.game, args.hiscoreDat, tracePtr);
     if (!defRes.ok) {
         std::fprintf(stderr, "%s\n", defRes.error.c_str());
-        return 2;
+        if (args.xmlOutput && defRes.errorKind == HiScoreErrorKind::StructureNotMatched) {
+            std::printf("<hi2txt>\n</hi2txt>\n");
+        }
+        return 0;
     }
 
     auto inRes = InputProcessor::process(args.mameRoot, args.game, defRes.def, args.inputPath, tracePtr);
     if (!inRes.ok) {
         if (inRes.error.rfind("No matching structure found", 0) == 0) {
+            std::fprintf(
+                stderr,
+                "ERROR: unable to find a structure from the xml definition that matches size and "
+                "hiscore.dat definition' for game '%s'\n",
+                args.game.c_str());
             if (args.xmlOutput) {
                 std::printf("<hi2txt>\n</hi2txt>\n");
             }
             return 0;
         }
         std::fprintf(stderr, "ERROR: %s\n", inRes.error.c_str());
-        return 2;
+        return 0;
     }
 
     HiScoreResult result = ResultRenderer::render(defRes.def, inRes.rows, inRes.outputId, options, tracePtr);
@@ -172,7 +180,7 @@ int App::run(int argc, char** argv) {
         else {
             std::fprintf(stderr, "ERROR: %s\n", result.error.c_str());
         }
-        return 2;
+        return 0;
     }
 
     OutputPrinter::print(result, args.xmlOutput ? OutputFormat::Xml : OutputFormat::Text);

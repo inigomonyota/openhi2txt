@@ -6,6 +6,11 @@
 #include <cstdint>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace openhi2txt::Utils {
 
 std::string trim(std::string s) {
@@ -137,7 +142,16 @@ std::string valueToString(const Value& v) {
 
 int64_t valueToInt(const Value& v) {
     if (auto* n = std::get_if<int64_t>(&v)) return *n;
-    if (auto* s = std::get_if<std::string>(&v)) return std::atoll(s->c_str());
+    if (auto* s = std::get_if<std::string>(&v)) {
+        std::string text = *s;
+        text.erase(std::remove(text.begin(), text.end(), '\0'), text.end());
+        return std::atoll(text.c_str());
+    }
+    if (auto* bytes = std::get_if<RawBytes>(&v)) {
+        uint64_t value = 0;
+        for (uint8_t byte : *bytes) value = (value << 8) | byte;
+        return (int64_t)value;
+    }
     return 0;
 }
 
@@ -212,10 +226,28 @@ static bool decodeUtf8At(const std::string& s, size_t i, uint32_t& cp, size_t& l
     return false;
 }
 
-void xmlEscapePrintPreserveEntities(const std::string& s) {
+static void printXmlLiteralLineFeed() {
+#ifdef _WIN32
+    // The CRT expands '\n' to CRLF in text mode. XML character data from
+    // hi2txt retains embedded line feeds verbatim, independently of the
+    // platform line endings used between elements.
+    std::fflush(stdout);
+    const int previousMode = _setmode(_fileno(stdout), _O_BINARY);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
+    if (previousMode != -1) _setmode(_fileno(stdout), previousMode);
+#else
+    std::fputc('\n', stdout);
+#endif
+}
+
+void xmlEscapePrintPreserveEntities(const std::string& s, bool attributeValue) {
     for (size_t i = 0; i < s.size(); ++i) {
         char ch = s[i];
-        if (ch == '&') {
+        if (ch == '\n') {
+            printXmlLiteralLineFeed();
+        }
+        else if (ch == '&') {
             size_t semi = 0;
             if (looksLikeEntityAt(s, i, semi)) {
                 std::string entityName = s.substr(i + 1, semi - i - 1);
@@ -231,9 +263,15 @@ void xmlEscapePrintPreserveEntities(const std::string& s) {
             std::printf("&amp;");
         }
         else if (ch == '<') std::printf("&lt;");
-        else if (ch == '>') std::printf("&gt;");
+        else if (ch == '>') {
+            if (attributeValue) std::printf(">");
+            else std::printf("&gt;");
+        }
         else if (ch == '"') std::printf("&quot;");
-        else if (ch == '\'') std::printf("&apos;");
+        else if (ch == '\'') {
+            if (attributeValue) std::printf("'");
+            else std::printf("&apos;");
+        }
         else if ((unsigned char)ch >= 0x80) {
             uint32_t cp = 0;
             size_t len = 0;

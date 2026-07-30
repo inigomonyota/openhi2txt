@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -19,6 +20,20 @@ enum class ScoreSource {
     RealInput,
     SavedCache,
     DefaultFallback
+};
+
+enum class HiScoreErrorKind {
+    None,
+    DefinitionNotFound,
+    DefinitionInvalid,
+    StructureNotMatched,
+    OutputNotFound,
+    InputNotFound,
+    InvalidData,
+    ScoreXmlNotFound,
+    ScoreXmlInvalid,
+    ConfigurationError,
+    Unknown
 };
 
 struct ReadOptions {
@@ -66,9 +81,20 @@ struct HiScoreField {
     DisplayLevel display = DisplayLevel::Always;
 };
 
+enum class HiScoreOutputKind {
+    Table,
+    Field
+};
+
+struct HiScoreOutputItem {
+    HiScoreOutputKind kind = HiScoreOutputKind::Table;
+    size_t index = 0;
+};
+
 struct HiScoreResult {
     bool ok = false;
     std::string error;
+    HiScoreErrorKind errorKind = HiScoreErrorKind::None;
 
     std::string game;
     std::string usedDefinition;
@@ -78,6 +104,7 @@ struct HiScoreResult {
     std::vector<HiScoreTable> tables;
     std::vector<HiScoreField> fields;
     std::vector<std::string> warnings;
+    std::vector<HiScoreOutputItem> outputOrder;
 };
 
 enum class ObfuscationMode {

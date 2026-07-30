@@ -101,12 +101,15 @@ static void applyByteSkip(std::vector<uint8_t>& b, const std::string& spec) {
         return;
     }
 
-    if (s == "1000" || s == "0100" || s == "0010" || s == "0001") {
-        const int keep = (s == "1000") ? 0 : (s == "0100") ? 1 : (s == "0010") ? 2 : 3;
+    const bool binaryMask =
+        s.size() > 1 &&
+        std::all_of(s.begin(), s.end(), [](char ch) { return ch == '0' || ch == '1'; }) &&
+        s.find('1') != std::string::npos;
+    if (binaryMask) {
         std::vector<uint8_t> out;
-        out.reserve((b.size() + 3) / 4);
-        for (size_t i = 0; i < b.size(); i += 4) {
-            if (i + (size_t)keep < b.size()) out.push_back(b[i + (size_t)keep]);
+        out.reserve(b.size());
+        for (size_t i = 0; i < b.size(); ++i) {
+            if (s[i % s.size()] == '1') out.push_back(b[i]);
         }
         b.swap(out);
         return;
@@ -604,7 +607,10 @@ static int64_t convertIntToBaseDigits(int64_t value, int base) {
 
 static Value decodeInt(const GameDef& def, const Elt& e, const uint8_t* p) {
     std::vector<uint8_t> b = buildTransformedBytes(def, e, p);
-    if (b.empty()) return {};
+    // Official hi2txt treats an integer whose transformation removes every
+    // byte (for example byte-trim removing an unused score sentinel) as zero,
+    // rather than as a missing value.
+    if (b.empty()) return (int64_t)0;
 
     const std::string dp = Utils::trim(e.decodingProfile);
     const bool profBcd = Utils::ieq(dp, "bcd");
@@ -856,7 +862,56 @@ static std::string decodeText(const GameDef& def, const Elt& e, const uint8_t* p
             if (stop) break;
             out += s;
         }
+
+        // Some legacy dumps truncate the final multi-byte text unit while
+        // providing one-byte charset entries for exactly that case.
+        const int consumedBits = (int)units.size() * e.srcUnitSizeBits;
+        const int remainingBits = totalBits - consumedBits;
+        if (hasStages && remainingBits > 0 && remainingBits <= 32 &&
+            (remainingBits % 8) == 0) {
+            uint32_t partial = 0;
+            for (int bitIndex = consumedBits; bitIndex < totalBits; ++bitIndex) {
+                const uint8_t byte = b[(size_t)(bitIndex / 8)];
+                partial = (partial << 1) |
+                    (uint32_t)((byte >> (7 - (bitIndex % 8))) & 1);
+            }
+            bool stop = false;
+            std::string s = mapUnit(partial, stop);
+            if (!stop) out += s;
+        }
         return out;
+    }
+
+    // Some definitions describe word-aligned printable ASCII without an
+    // explicit byte-skip (for example 00 41 00 42 00 43 for "ABC").
+    // Detect only that unambiguous shape: zero bytes in one complete lane
+    // and printable ASCII in the other. A general zero-byte removal would
+    // corrupt charsets where 0x00 is meaningful and NUL-terminated fields.
+    if (!hasStages && !e.hasAsciiStep && !e.hasAsciiOffset &&
+        b.size() >= 4 && (b.size() % 2) == 0) {
+        for (size_t paddingLane = 0; paddingLane < 2; ++paddingLane) {
+            bool wordAlignedAscii = true;
+            for (size_t i = 0; i < b.size(); ++i) {
+                if ((i % 2) == paddingLane) {
+                    if (b[i] != 0) {
+                        wordAlignedAscii = false;
+                        break;
+                    }
+                }
+                else if (b[i] < 0x20 || b[i] > 0x7E) {
+                    wordAlignedAscii = false;
+                    break;
+                }
+            }
+            if (wordAlignedAscii) {
+                for (size_t i = 1 - paddingLane; i < b.size(); i += 2) {
+                    bool stop = false;
+                    out += mapUnit((uint32_t)b[i], stop);
+                    if (stop) break;
+                }
+                return out;
+            }
+        }
     }
 
     for (size_t i = 0; i < b.size(); ++i) {
@@ -868,18 +923,15 @@ static std::string decodeText(const GameDef& def, const Elt& e, const uint8_t* p
     return out;
 }
 
-static Value decodeRaw(const Elt& e, const uint8_t* p) {
-    if (e.size <= 0 || !p) return {};
-    std::vector<uint8_t> b((size_t)e.size);
-    std::memcpy(b.data(), p, (size_t)e.size);
-    return b;
+static Value decodeRaw(const GameDef& def, const Elt& e, const uint8_t* p) {
+    return buildTransformedBytes(def, e, p);
 }
 
 static Value decode(const GameDef& def, const Elt& e, const uint8_t* p) {
     if (e.size <= 0) return {};
     if (ieq(e.type, "text")) return decodeText(def, e, p);
     if (ieq(e.type, "int"))  return decodeInt(def, e, p);
-    if (ieq(e.type, "raw"))  return decodeRaw(e, p);
+    if (ieq(e.type, "raw"))  return decodeRaw(def, e, p);
     return {};
 }
 
@@ -1142,10 +1194,7 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
             const size_t need = (size_t)el.size;
             const size_t avail = raw.size() - p;
 
-            // strict by default
             bool allowShort =
-                inLoop &&
-                (loopI == loopCount - 1) &&
                 (avail > 0) &&
                 (avail < need) &&
                 (ieq(el.type, "text") || ieq(el.type, "raw") || ieq(el.type, "int"));

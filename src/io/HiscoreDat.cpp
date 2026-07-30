@@ -30,6 +30,12 @@ namespace openhi2txt::HiscoreDat {
         // ignore weird directives that start with "@:" etc (those are body lines)
         if (left.size() >= 1 && left[0] == '@') return false;
 
+        // A game label ends at the colon (optionally followed by a comment).
+        // Legacy hiscore.dat definition lines also contain colons, but have
+        // data after the first one and must remain part of the block body.
+        const std::string after = trim(t.substr(pos + 1));
+        if (!after.empty() && after[0] != ';') return false;
+
         outLabel = left;
         return true;
     }

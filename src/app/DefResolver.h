@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.h"
+#include "openhi2txt/openhi2txt.h"
 #include <filesystem>
 #include <string>
 
@@ -13,6 +14,7 @@ struct DefLoadResult {
     std::string xmlText;     // resolved xml that was parsed (after sameas chase)
     bool ok = false;
     std::string error;
+    HiScoreErrorKind errorKind = HiScoreErrorKind::None;
 };
 
 class DefResolver {

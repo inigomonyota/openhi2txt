@@ -17,7 +17,7 @@ namespace openhi2txt {
 	static std::string attr(rapidxml::xml_node<>* n, const char* name) {
 		if (!n) return "";
 		if (auto* a = n->first_attribute(name)) {
-			std::string val = a->value() ? a->value() : "";
+			std::string val = a->value() ? std::string(a->value(), a->value_size()) : "";
 			return EntityMapper::resolve(trim(val));
 		}
 		return "";
@@ -26,7 +26,7 @@ namespace openhi2txt {
 	static std::string attrRaw(rapidxml::xml_node<>* n, const char* name) {
 		if (!n) return "";
 		if (auto* a = n->first_attribute(name)) {
-			std::string val = a->value() ? a->value() : "";
+			std::string val = a->value() ? std::string(a->value(), a->value_size()) : "";
 			return EntityMapper::resolve(val);
 		}
 		return "";
@@ -37,9 +37,9 @@ namespace openhi2txt {
 		std::string result;
 		for (auto* c = n->first_node(); c; c = c->next_sibling()) {
 			if (c->type() == rapidxml::node_data || c->type() == rapidxml::node_cdata)
-				result += (c->value() ? c->value() : "");
+				result += c->value() ? std::string(c->value(), c->value_size()) : "";
 		}
-		if (result.empty() && n->value()) result = n->value();
+		if (result.empty() && n->value()) result.assign(n->value(), n->value_size());
 		return EntityMapper::resolve(trim(result));
 	}
 
@@ -48,9 +48,9 @@ namespace openhi2txt {
 		std::string result;
 		for (auto* c = n->first_node(); c; c = c->next_sibling()) {
 			if (c->type() == rapidxml::node_data || c->type() == rapidxml::node_cdata)
-				result += (c->value() ? c->value() : "");
+				result += c->value() ? std::string(c->value(), c->value_size()) : "";
 		}
-		if (result.empty() && n->value()) result = n->value();
+		if (result.empty() && n->value()) result.assign(n->value(), n->value_size());
 		return EntityMapper::resolve(result);
 	}
 
@@ -375,20 +375,30 @@ namespace openhi2txt {
 	}
 
 	static std::string normalizeXmlHiscoreDefinitionToken(const std::string& token) {
+		std::string normalized = trim(token);
+		std::replace(normalized.begin(), normalized.end(), ',', ':');
+
 		std::vector<std::string> parts;
 		std::string cur;
-		for (char ch : trim(token)) {
+		for (char ch : normalized) {
 			if (ch == ':') { parts.push_back(cur); cur.clear(); }
 			else cur.push_back(ch);
 		}
 		parts.push_back(cur);
 
-		if (parts.size() != 5) return "";
-		if (!parts[0].empty() && parts[0][0] == '@') return "";
+		size_t firstDefinitionPart = 0;
+		if (normalized.rfind("@:", 0) == 0) {
+			if (parts.size() < 6) return "";
+			firstDefinitionPart = parts.size() - 4;
+		}
+		else {
+			if (parts.size() != 5) return "";
+			firstDefinitionPart = 1;
+		}
 
 		std::string out;
-		for (size_t i = 1; i < parts.size(); ++i) {
-			if (i > 1) out += ":";
+		for (size_t i = firstDefinitionPart; i < parts.size(); ++i) {
+			if (i > firstDefinitionPart) out += ":";
 			std::string p = trim(parts[i]);
 			if (p.size() >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p = p.substr(2);
 			if (p.empty()) return "";
@@ -498,7 +508,12 @@ namespace openhi2txt {
 			tok = trim(tok);
 			if (tok.empty()) continue;
 			size_t c = tok.find(':');
-			if (c == std::string::npos) continue;
+			if (c == std::string::npos) {
+				IgnoreRule r;
+				r.colId = trim(tok);
+				if (!r.colId.empty()) tab.ignoreRules.push_back(std::move(r));
+				continue;
+			}
 			IgnoreRule r;
 			r.colId = trim(tok.substr(0, c));
 			r.value = trim(tok.substr(c + 1));
@@ -536,16 +551,22 @@ namespace openhi2txt {
 	}
 
 	static std::vector<uint8_t> parseBitStringToMaskBytes(const std::string& maskAttr) {
+		std::string bits;
+		bits.reserve(maskAttr.size());
+		for (char ch : maskAttr) {
+			if (ch == '0' || ch == '1') bits.push_back(ch);
+		}
+
 		std::vector<uint8_t> out;
-		std::stringstream ss(maskAttr);
-		std::string tok;
-		while (ss >> tok) {
-			if (tok.size() != 8) continue;
+		out.reserve((bits.size() + 7) / 8);
+		for (size_t pos = 0; pos < bits.size(); pos += 8) {
 			uint8_t b = 0;
-			for (size_t i = 0; i < 8; ++i) {
+			const size_t count = std::min<size_t>(8, bits.size() - pos);
+			for (size_t i = 0; i < count; ++i) {
 				b <<= 1;
-				if (tok[i] == '1') b |= 1;
+				if (bits[pos + i] == '1') b |= 1;
 			}
+			if (count < 8) b <<= (8 - count);
 			out.push_back(b);
 		}
 		return out;
@@ -613,18 +634,34 @@ namespace openhi2txt {
 					const char* cn = c->name();
 					if (!cn || *cn == '\0') continue;
 
-					if (ieq(cn, "add") || ieq(cn, "increment")) f.mathOps.push_back({ FormatKind::Add, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "substract") || ieq(cn, "decrement")) f.mathOps.push_back({ FormatKind::Substract, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "multiply")) f.mathOps.push_back({ FormatKind::Multiply, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "divide")) f.mathOps.push_back({ FormatKind::Divide, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "remainder")) f.mathOps.push_back({ FormatKind::Remainder, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "divide_trunc")) f.mathOps.push_back({ FormatKind::DivideTrunc, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "divide_round")) f.mathOps.push_back({ FormatKind::DivideRound, std::atof(nodeText(c).c_str()) });
-					else if (ieq(cn, "shift")) f.mathOps.push_back({ FormatKind::Shift, std::atof(nodeText(c).c_str()) });
+					auto addMathOp = [&](FormatKind kind) {
+						MathOp op;
+						op.kind = kind;
+						op.constant = std::atof(nodeText(c).c_str());
+						for (auto* ref = c->first_node(); ref; ref = ref->next_sibling()) {
+							const char* rn = ref->name();
+							if (!rn || (!ieq(rn, "field") && !ieq(rn, "column"))) continue;
+							op.hasReference = true;
+							op.reference.id = attr(ref, "src");
+							if (op.reference.id.empty()) op.reference.id = attr(ref, "id");
+							op.reference.format = formatAttr(ref);
+							break;
+						}
+						f.mathOps.push_back(std::move(op));
+					};
 
-					else if (ieq(cn, "round")) f.doRound = true;
-					else if (ieq(cn, "trunc")) f.doTrunc = true;
-					else if (ieq(cn, "loopindex")) f.doLoopIndex = true;
+					if (ieq(cn, "add") || ieq(cn, "increment")) addMathOp(FormatKind::Add);
+					else if (ieq(cn, "substract") || ieq(cn, "decrement")) addMathOp(FormatKind::Substract);
+					else if (ieq(cn, "multiply")) addMathOp(FormatKind::Multiply);
+					else if (ieq(cn, "divide")) addMathOp(FormatKind::Divide);
+					else if (ieq(cn, "remainder")) addMathOp(FormatKind::Remainder);
+					else if (ieq(cn, "divide_trunc")) addMathOp(FormatKind::DivideTrunc);
+					else if (ieq(cn, "divide_round")) addMathOp(FormatKind::DivideRound);
+					else if (ieq(cn, "shift")) addMathOp(FormatKind::Shift);
+
+					else if (ieq(cn, "round")) { addMathOp(FormatKind::Round); f.doRound = true; }
+					else if (ieq(cn, "trunc")) { addMathOp(FormatKind::Trunc); f.doTrunc = true; }
+					else if (ieq(cn, "loopindex")) { addMathOp(FormatKind::LoopIndex); f.doLoopIndex = true; }
 
 					else if (ieq(cn, "prefix")) {
 						AffixOp a;
@@ -669,7 +706,10 @@ namespace openhi2txt {
 						f.pad.max = std::atoi(attr(c, "max").c_str());
 						f.pad.padChar = attrRaw(c, "value");
 						if (f.pad.padChar.empty()) f.pad.padChar = nodeTextRaw(c);
-						if (f.pad.padChar.empty()) f.pad.padChar = "0";
+						// RapidXML discards whitespace-only data nodes. In the
+						// official definitions an otherwise empty <pad> body is
+						// the literal space padding character.
+						if (f.pad.padChar.empty()) f.pad.padChar = " ";
 					}
 					else if (ieq(cn, "case")) {
 						CaseMap cm;
@@ -711,6 +751,14 @@ namespace openhi2txt {
 					}
 					else if (ieq(cn, "concat")) {
 						for (auto* cc = c->first_node(); cc; cc = cc->next_sibling()) {
+							if (cc->type() == rapidxml::node_data ||
+								cc->type() == rapidxml::node_cdata) {
+								ConcatPart p;
+								p.kind = ConcatPartKind::Text;
+								p.text.assign(cc->value(), cc->value_size());
+								if (!p.text.empty()) f.concatParts.push_back(std::move(p));
+								continue;
+							}
 							const char* ccn = cc->name();
 							if (!ccn || *ccn == '\0') continue;
 
@@ -793,10 +841,14 @@ namespace openhi2txt {
 					int b = parseCharsetSrc(attr(c, "src"));
 					if (b >= 0) {
 						std::string dst = attrRaw(c, "dst");
-						cs.entries[(uint32_t)b] = dst;
+						// hi2txt keeps the first mapping when malformed legacy
+						// definitions repeat a source value (gseeker relies on it).
+						cs.entries.emplace((uint32_t)b, dst);
 						if (b <= 255) {
-							cs.dst[b] = dst;
-							cs.used[b] = true;
+							if (!cs.used[b]) {
+								cs.dst[b] = dst;
+								cs.used[b] = true;
+							}
 						}
 					}
 				}
@@ -1046,7 +1098,9 @@ namespace openhi2txt {
 						StructureItem it;
 						it.kind = StructureItem::Kind::Loop;
 
-						it.loop.count = std::atoi(attr(c, "count").c_str());
+						it.loop.count = c->first_attribute("count")
+							? std::atoi(attr(c, "count").c_str())
+							: 1;
 
 						if (c->first_attribute("start")) {
 							it.loop.startIndex = std::atoi(attr(c, "start").c_str());
@@ -1081,6 +1135,8 @@ namespace openhi2txt {
 				OutputDef& out = def.outputs[outId];
 				if (firstOutputWithId) def.outputOrder.push_back(outId);
 				out.id = outId;
+				const size_t firstTableIndex = out.tables.size();
+				const size_t firstFieldIndex = out.fields.size();
 
 				// --------------------
 				// Tables
@@ -1132,6 +1188,19 @@ namespace openhi2txt {
 
 					if (!fld.id.empty())
 						out.fields.push_back(std::move(fld));
+				}
+
+				size_t tableIndex = firstTableIndex;
+				size_t fieldIndex = firstFieldIndex;
+				for (auto* item = n->first_node(); item; item = item->next_sibling()) {
+					const char* itemName = item->name();
+					if (!itemName || *itemName == '\0') continue;
+					if (ieq(itemName, "table") && tableIndex < out.tables.size()) {
+						out.items.push_back(OutputItemRef{ OutputItemKind::Table, tableIndex++ });
+					}
+					else if (ieq(itemName, "field") && fieldIndex < out.fields.size()) {
+						out.items.push_back(OutputItemRef{ OutputItemKind::Field, fieldIndex++ });
+					}
 				}
 			}
 		}

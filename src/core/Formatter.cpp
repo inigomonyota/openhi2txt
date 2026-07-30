@@ -211,11 +211,15 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
 
     auto toInt64 = [&](const Value& v) -> int64_t {
         if (auto* n = std::get_if<int64_t>(&v)) return *n;
-        return std::atoll(valueToString(v).c_str());
+        std::string text = valueToString(v);
+        text.erase(std::remove(text.begin(), text.end(), '\0'), text.end());
+        return std::atoll(text.c_str());
         };
     auto toDouble = [&](const Value& v) -> double {
         if (auto* n = std::get_if<int64_t>(&v)) return (double)*n;
-        return std::atof(valueToString(v).c_str());
+        std::string text = valueToString(v);
+        text.erase(std::remove(text.begin(), text.end(), '\0'), text.end());
+        return std::atof(text.c_str());
         };
 
 
@@ -248,15 +252,22 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
 
     // sum/concat/min/max override input, then the rest of the format still applies.
     if (!f.sumCols.empty()) {
-        int64_t sum = 0;
-        for (auto& c : f.sumCols) {
-            const Value* pv = findRowValue(row, c.id);
-            if (!pv) continue;
-            Value v = *pv;
-            if (!c.format.empty()) v = Formatter::apply(formats, c.format, row, v, loopIndex);
-            sum += toInt64(v);
+        const std::string globalSumKey = "__hi2txt_global_sum:" + f.id;
+        auto global = row.find(globalSumKey);
+        if (global != row.end()) {
+            effectiveInput = global->second;
         }
-        effectiveInput = sum;
+        else {
+            int64_t sum = 0;
+            for (auto& c : f.sumCols) {
+                const Value* pv = findRowValue(row, c.id);
+                if (!pv) continue;
+                Value v = *pv;
+                if (!c.format.empty()) v = Formatter::apply(formats, c.format, row, v, loopIndex);
+                sum += toInt64(v);
+            }
+            effectiveInput = sum;
+        }
     }
     else if (!f.concatParts.empty()) {
         std::string out;
@@ -339,8 +350,19 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
 
     if (hasNumericOps) {
         for (auto& op : f.mathOps) {
-            const double a = op.second;
-            switch (op.first) {
+            double a = op.constant;
+            if (op.hasReference) {
+                Value operand = effectiveInput;
+                if (!op.reference.id.empty()) {
+                    const Value* referenced = findRowValue(row, op.reference.id);
+                    operand = referenced ? *referenced : Value{};
+                }
+                if (!op.reference.format.empty()) {
+                    operand = Formatter::apply(formats, op.reference.format, row, operand, loopIndex);
+                }
+                a = toDouble(operand);
+            }
+            switch (op.kind) {
                 case FormatKind::Add:        num += a; break;
                 case FormatKind::Substract:  num -= a; break;
                 case FormatKind::Multiply:   num *= a; break;
@@ -369,12 +391,24 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
                     x <<= (unsigned)sh;
                     num = (double)(int64_t)x;
                 } break;
+                case FormatKind::Round:
+                    num = (double)std::llround(num);
+                    break;
+                case FormatKind::Trunc:
+                    num = (double)(int64_t)num;
+                    break;
+                case FormatKind::LoopIndex:
+                    if (loopIndex >= 0) num = (double)loopIndex;
+                    break;
             }
         }
 
-        if (f.doLoopIndex && loopIndex >= 0) { num = (double)loopIndex; }
-        if (f.doRound) { num = (double)std::llround(num); }
-        if (f.doTrunc) { num = (double)(int64_t)num; }
+        // Older parsed definitions may still express these as flags.
+        if (f.mathOps.empty()) {
+            if (f.doLoopIndex && loopIndex >= 0) { num = (double)loopIndex; }
+            if (f.doRound) { num = (double)std::llround(num); }
+            if (f.doTrunc) { num = (double)(int64_t)num; }
+        }
     }
 
     // Convert to string.
@@ -440,6 +474,14 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
             }
 
             // Default behavior: decimal unless 0x/0X
+            const bool oversizedBareNumber =
+                t.size() > 18 &&
+                std::all_of(t.begin(), t.end(),
+                    [](unsigned char ch) { return std::isdigit(ch) != 0; });
+            if (oversizedBareNumber) {
+                out = raw;
+                return true;
+            }
             bool ok = false;
             int64_t n = Utils::parseInt64Auto(t, &ok);
             if (ok) { out = n; return true; }
@@ -449,6 +491,36 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
             };
 
         auto cmpValues = [&](const Value& a, const Value& b) -> int {
+            auto rawHexMatches = [](const Value& rawValue, const Value& textValue, int& result) -> bool {
+                const auto* bytes = std::get_if<RawBytes>(&rawValue);
+                const auto* text = std::get_if<std::string>(&textValue);
+                if (!bytes || !text) return false;
+
+                std::string expected = Utils::trim(*text);
+                if (expected.size() < 2 || expected[0] != '0' ||
+                    (expected[1] != 'x' && expected[1] != 'X')) {
+                    return false;
+                }
+                expected.erase(0, 2);
+                std::transform(expected.begin(), expected.end(), expected.begin(),
+                    [](unsigned char ch) { return (char)std::toupper(ch); });
+
+                static const char* hex = "0123456789ABCDEF";
+                std::string actual;
+                actual.reserve(bytes->size() * 2);
+                for (uint8_t byte : *bytes) {
+                    actual.push_back(hex[(byte >> 4) & 0x0F]);
+                    actual.push_back(hex[byte & 0x0F]);
+                }
+
+                while (expected.size() < actual.size()) expected.insert(expected.begin(), '0');
+                result = actual < expected ? -1 : actual > expected ? 1 : 0;
+                return true;
+                };
+
+            int rawResult = 0;
+            if (rawHexMatches(a, b, rawResult)) return rawResult;
+            if (rawHexMatches(b, a, rawResult)) return -rawResult;
 
             auto rawToInt = [](const Value& v, int64_t& out) -> bool {
                 if (auto* n = std::get_if<int64_t>(&v)) {
@@ -469,11 +541,13 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
                     return false;
                 }
                 if (auto* rb = std::get_if<RawBytes>(&v)) {
-                    if (rb->empty() || rb->size() > 8) return false;
-                    uint64_t acc = 0;
-                    for (uint8_t x : *rb) acc = (acc << 8) | (uint64_t)x;
-                    out = (int64_t)acc;
-                    return true;
+                    // A one-byte raw field is treated as a character/code and
+                    // can match numeric case maps. Wider raw fields retain
+                    // their encoded width (0002 does not match src="2").
+                    if (rb->size() == 1) {
+                        out = rb->front();
+                        return true;
+                    }
                 }
                 return false;
                 };
@@ -514,18 +588,18 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
         bool haveDefault = false;
 
         for (const auto& c : f.cases) {
-            if (c.isDefault) { defCase = c; haveDefault = true; continue; }
+            if (c.isDefault) { defCase = c; haveDefault = true; }
 
             Value lhs = hasNumericOps ? Value((int64_t)std::llround(num)) : effectiveInput;
+            Value comparedInput = lhs;
             if (!c.operatorFormat.empty())
-                lhs = Formatter::apply(formats, c.operatorFormat, row, lhs, loopIndex);
+                comparedInput = Formatter::apply(formats, c.operatorFormat, row, lhs, loopIndex);
 
             Value rhs;
             parseSrcValue(c.src, rhs);
 
-            const int cmp = cmpValues(lhs, rhs);
+            const int cmp = cmpValues(comparedInput, rhs);
             const std::string op = c.op.empty() ? "==" : c.op;
-
             if (!matchOp(cmp, op)) continue;
 
             if (c.hasDst) {
@@ -632,6 +706,32 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
     std::string chain = fmtExpr;
     if (trim(chain).empty()) return in;
 
+    if (ieq(trim(chain), "hexadecimal_string") || ieq(trim(chain), "hex")) {
+        if (auto* bytes = std::get_if<RawBytes>(&in)) {
+            static const char* digits = "0123456789ABCDEF";
+            std::string out = "0x";
+            out.reserve(2 + bytes->size() * 2);
+            for (uint8_t byte : *bytes) {
+                out.push_back(digits[(byte >> 4) & 0x0F]);
+                out.push_back(digits[byte & 0x0F]);
+            }
+            return out;
+        }
+        if (auto* number = std::get_if<int64_t>(&in)) {
+            char buf[64];
+            if (*number < 0)
+                std::snprintf(buf, sizeof(buf), "-0x%llx",
+                    (unsigned long long)(-*number));
+            else
+                std::snprintf(buf, sizeof(buf), "0x%llx",
+                    (unsigned long long)*number);
+            return std::string(buf);
+        }
+        if (auto* text = std::get_if<std::string>(&in)) {
+            return std::string("0x") + *text;
+        }
+    }
+
     {
         const std::string direct = trim(chain);
         if (direct.size() > 1 && (direct[0] == 'x' || direct[0] == 'X')) {
@@ -652,11 +752,15 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
 
         auto toInt = [&](const Value& v) -> int64_t {
             if (auto* n = std::get_if<int64_t>(&v)) return *n;
-            return std::atoll(valueToString(v).c_str());
+            std::string text = valueToString(v);
+            text.erase(std::remove(text.begin(), text.end(), '\0'), text.end());
+            return std::atoll(text.c_str());
             };
         auto toDouble = [&](const Value& v) -> double {
             if (auto* n = std::get_if<int64_t>(&v)) return (double)*n;
-            return std::atof(valueToString(v).c_str());
+            std::string text = valueToString(v);
+            text.erase(std::remove(text.begin(), text.end(), '\0'), text.end());
+            return std::atof(text.c_str());
             };
 
         auto isAllInt = [&](const char* s) -> bool {
@@ -756,6 +860,25 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
 
         // 0x => hex string
         if (ieq(op, "0x")) {
+            if (std::holds_alternative<std::monostate>(cur)) {
+                cur = std::string();
+                return true;
+            }
+            if (auto* bytes = std::get_if<RawBytes>(&cur)) {
+                static const char* hex = "0123456789ABCDEF";
+                std::string out = "0x";
+                out.reserve(2 + bytes->size() * 2);
+                for (uint8_t byte : *bytes) {
+                    out.push_back(hex[(byte >> 4) & 0x0F]);
+                    out.push_back(hex[byte & 0x0F]);
+                }
+                cur = std::move(out);
+                return true;
+            }
+            if (auto* text = std::get_if<std::string>(&cur)) {
+                cur = std::string("0x") + *text;
+                return true;
+            }
             int64_t n = toInt(cur);
             char buf[64];
             if (n < 0) std::snprintf(buf, sizeof(buf), "-0x%llx", (unsigned long long)(-n));
@@ -764,12 +887,13 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
             return true;
         }
 
-        // shift implicit: >N
+        // GreatStone's >N shorthand extracts higher bit groups, so it is a
+        // right shift even though the long-form XML <shift> operation shifts left.
         if (op.size() > 1 && op[0] == '>' && isAllInt(op.c_str() + 1)) {
             int sh = std::atoi(op.c_str() + 1);
             if (sh < 0) sh = 0;
             uint64_t x = (uint64_t)toInt(cur);
-            x <<= (unsigned)sh;
+            x >>= (unsigned)sh;
             cur = (int64_t)x;
             return true;
         }
@@ -839,7 +963,11 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
             std::string evalTok = trim(tok);
             std::string lookupTok = evalTok;
             const std::string leftTrimmed = tok.substr(tok.find_first_not_of(" \t\r\n") == std::string::npos ? tok.size() : tok.find_first_not_of(" \t\r\n"));
-            if (leftTrimmed.rfind("Trim", 0) == 0) evalTok = leftTrimmed;
+            if (leftTrimmed.rfind("Trim", 0) == 0 ||
+                leftTrimmed.rfind("PadL", 0) == 0 ||
+                leftTrimmed.rfind("PadR", 0) == 0) {
+                evalTok = leftTrimmed;
+            }
 
             if (!evalTok.empty()) {
                 auto it = formats.find(lookupTok);

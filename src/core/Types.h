@@ -17,7 +17,10 @@ enum class FormatKind {
     Remainder,     // int modulo
     DivideTrunc,   // int division
     DivideRound,   // rounded int division
-    Shift          // logical left shift
+    Shift,         // logical left shift
+    Round,
+    Trunc,
+    LoopIndex
 };
 
 enum class ApplyToKind { Value, Char };
@@ -34,6 +37,13 @@ struct CaseMap {
 struct TrimOp { TrimDir dir = TrimDir::None; std::string chars; };
 
 struct FormatColRef { std::string id; std::string format; };
+
+struct MathOp {
+    FormatKind kind = FormatKind::Add;
+    double constant = 0.0;
+    bool hasReference = false;
+    FormatColRef reference;
+};
 
 struct PadOp {
     bool enabled = false;
@@ -74,7 +84,7 @@ struct FormatDef {
     bool inputAsSubcolumnsInput = false;   // parsed, not used unless you implement that feature
 
     // numeric ops (in sequence)
-    std::vector<std::pair<FormatKind, double>> mathOps;
+    std::vector<MathOp> mathOps;
 
     // string ops
     std::vector<AffixOp> prefixes;
@@ -240,10 +250,17 @@ struct BitmaskDef {
     std::vector<uint8_t> mergedMask;
 };
 
+enum class OutputItemKind { Table, Field };
+struct OutputItemRef {
+    OutputItemKind kind = OutputItemKind::Table;
+    size_t index = 0;
+};
+
 struct OutputDef {
     std::string id;            // "" = default
     std::vector<Table> tables; // tables inside that <output>
     std::vector<Column> fields;
+    std::vector<OutputItemRef> items;
 };
 
 struct GameDef {
