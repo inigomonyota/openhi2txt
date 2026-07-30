@@ -141,12 +141,12 @@ static std::string formatNumberWithFormatter(double x, const std::string& fmt) {
 static const Value* findRowValue(const std::unordered_map<std::string, Value>& row,
                                  const std::string& id,
                                  const std::string& prefixHint = std::string()) {
-    auto it = row.find(id);
+    auto it = Utils::findIdentifier(row, id);
     if (it != row.end()) return &it->second;
 
     if (!prefixHint.empty()) {
         const std::string hinted = prefixHint + " " + id;
-        it = row.find(hinted);
+        it = Utils::findIdentifier(row, hinted);
         if (it != row.end()) return &it->second;
     }
 
@@ -154,7 +154,7 @@ static const Value* findRowValue(const std::unordered_map<std::string, Value>& r
     const Value* found = nullptr;
     for (const auto& kv : row) {
         if (kv.first.size() < suffix.size()) continue;
-        if (kv.first.compare(kv.first.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+        if (!Utils::ieq(kv.first.substr(kv.first.size() - suffix.size()), suffix)) continue;
         if (found) return nullptr;
         found = &kv.second;
     }
@@ -170,7 +170,7 @@ static std::string commonPrefixHint(const std::vector<ConcatPart>& parts) {
         const std::string prefix = p.id.substr(0, sp);
         if (Utils::ieq(prefix, "LOOP")) continue;
         if (hint.empty()) hint = prefix;
-        else if (hint != prefix) {
+        else if (!Utils::ieq(hint, prefix)) {
             // Keep the first concrete namespace as a hint. Some official
             // definitions mix one namespaced column with generic aliases.
             return hint;
@@ -970,7 +970,7 @@ Value Formatter::apply(const std::unordered_map<std::string, FormatDef>& formats
             }
 
             if (!evalTok.empty()) {
-                auto it = formats.find(lookupTok);
+                auto it = Utils::findIdentifier(formats, lookupTok);
                 if (it != formats.end()) {
                     cur = applyOne(formats, it->second, row, cur, loopIndex);
                 }

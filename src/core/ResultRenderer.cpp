@@ -116,7 +116,7 @@ static void collectFormatDepsDfs(
     const std::unordered_map<std::string, FormatDef>& fmts,
     const std::string& fmtId,
     std::unordered_set<std::string>& out) {
-    auto it = fmts.find(fmtId);
+    auto it = Utils::findIdentifier(fmts, fmtId);
     if (it == fmts.end()) return;
     const FormatDef& f = it->second;
 
@@ -130,7 +130,7 @@ static void collectFormatDepsDfs(
         for (const auto& r : refs) {
             if (r.format.empty()) continue;
             for (const auto& tok : splitFormatChain(r.format)) {
-                if (fmts.find(tok) != fmts.end()) {
+                if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
                     collectFormatDepsDfs(fmts, tok, out);
                     continue;
                 }
@@ -146,7 +146,7 @@ static void collectFormatDepsDfs(
     for (const auto& p : f.concatParts) {
         if (p.format.empty()) continue;
         for (const auto& tok : splitFormatChain(p.format)) {
-            if (fmts.find(tok) != fmts.end()) {
+            if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
                 collectFormatDepsDfs(fmts, tok, out);
                 continue;
             }
@@ -160,7 +160,7 @@ static std::unordered_set<std::string> collectFormatDeps(
     const std::string& fmtChain) {
     std::unordered_set<std::string> deps;
     for (const auto& tok : splitFormatChain(fmtChain)) {
-        if (fmts.find(tok) != fmts.end()) {
+        if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
             collectFormatDepsDfs(fmts, tok, deps);
             continue;
         }
@@ -179,7 +179,7 @@ static bool rowRelevantToTable(const GameDef& def,
         bool sourcePresent = false;
 
         if (!src.empty() && !Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
-            auto it = row.find(src);
+            auto it = Utils::findIdentifier(row, src);
             if (it != row.end()) {
                 value = it->second;
                 sourcePresent = true;
@@ -190,7 +190,7 @@ static bool rowRelevantToTable(const GameDef& def,
             if (!sourcePresent) {
                 bool synthesizesEmpty = false;
                 for (const auto& token : splitFormatChain(col.format)) {
-                    auto format = def.formats.find(token);
+                    auto format = Utils::findIdentifier(def.formats, token);
                     if (format == def.formats.end()) continue;
                     for (const auto& caseMap : format->second.cases) {
                         if (caseMap.isDefault || caseMap.src.empty()) {
@@ -203,7 +203,7 @@ static bool rowRelevantToTable(const GameDef& def,
                 if (!synthesizesEmpty) {
                     const auto dependencies = collectFormatDeps(def.formats, col.format);
                     for (const auto& dependency : dependencies) {
-                        if (row.find(dependency) != row.end()) {
+                        if (Utils::findIdentifier(row, dependency) != row.end()) {
                             synthesizesEmpty = true;
                             break;
                         }
@@ -293,7 +293,7 @@ static bool rowShouldIgnore(const Table& tab,
                 v = (ui != row.end()) ? ui->second : Value((int64_t)rowIdx);
             }
             else {
-                auto srcIt = row.find(src);
+                auto srcIt = Utils::findIdentifier(row, src);
                 if (srcIt != row.end()) v = srcIt->second;
             }
 
@@ -305,7 +305,7 @@ static bool rowShouldIgnore(const Table& tab,
             }
         }
         else {
-            auto it = row.find(r.colId);
+            auto it = Utils::findIdentifier(row, r.colId);
             if (it != row.end()) v = it->second;
         }
 
@@ -407,17 +407,17 @@ static Value sortKeyValue(const std::unordered_map<std::string, Value>& row,
             fromColumnAlias = true;
         }
         else {
-            auto it = row.find(src);
-            if (it != row.end()) {
-                v = it->second;
+            auto value = Utils::findIdentifier(row, src);
+            if (value != row.end()) {
+                v = value->second;
                 fromColumnAlias = true;
             }
         }
     }
 
     if (!fromColumnAlias) {
-        auto it = row.find(tab.sortKey);
-        if (it != row.end()) v = it->second;
+        auto value = Utils::findIdentifier(row, tab.sortKey);
+        if (value != row.end()) v = value->second;
     }
 
     if (!tab.sortFormat.empty()) {
@@ -447,7 +447,7 @@ static bool reverseEqualSortGroups(const Table& tab) {
 
 static const OutputDef* selectOutput(const GameDef& def, const std::string& outputId) {
     if (!outputId.empty()) {
-        auto it = def.outputs.find(outputId);
+        auto it = Utils::findIdentifier(def.outputs, outputId);
         if (it != def.outputs.end()) return &it->second;
         return nullptr;
     }
@@ -456,7 +456,7 @@ static const OutputDef* selectOutput(const GameDef& def, const std::string& outp
     if (it0 != def.outputs.end()) return &it0->second;
 
     for (const auto& id : def.outputOrder) {
-        auto it = def.outputs.find(id);
+        auto it = Utils::findIdentifier(def.outputs, id);
         if (it != def.outputs.end()) return &it->second;
     }
     return nullptr;
@@ -467,7 +467,7 @@ static std::string ordinalOutputLabel(const GameDef& def, const OutputDef* out) 
 
     int index = 0;
     auto isSelected = [&](const std::string& id) {
-        auto it = def.outputs.find(id);
+        auto it = Utils::findIdentifier(def.outputs, id);
         return it != def.outputs.end() && &it->second == out;
     };
 
@@ -488,7 +488,7 @@ static std::string ordinalOutputLabel(const GameDef& def, const OutputDef* out) 
 
     for (const auto& id : def.outputOrder) {
         if (id.empty()) continue;
-        if (def.outputs.find(id) == def.outputs.end()) continue;
+        if (Utils::findIdentifier(def.outputs, id) == def.outputs.end()) continue;
         ++index;
         if (isSelected(id)) return "the " + std::to_string(index) + suffix(index) + " one";
     }
@@ -537,7 +537,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
                 v = (it != row.end()) ? it->second : Value((int64_t)rowIdx);
             }
             else {
-                auto it = row.find(src);
+                auto it = Utils::findIdentifier(row, src);
                 if (it != row.end()) v = it->second;
             }
 
@@ -595,8 +595,9 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             }
             for (auto& filteredRow : filtered) {
                 for (const auto& id : globalOperandIds) {
-                    auto field = rows.front().find(id);
-                    if (field != rows.front().end() && filteredRow.find(id) == filteredRow.end()) {
+                    auto field = Utils::findIdentifier(rows.front(), id);
+                    if (field != rows.front().end() &&
+                        Utils::findIdentifier(filteredRow, id) == filteredRow.end()) {
                         filteredRow[id] = field->second;
                     }
                 }
@@ -638,7 +639,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             const FormatColRef& ref = format.sumCols.front();
             int64_t total = 0;
             for (auto& aggregateRow : filtered) {
-                auto valueIt = aggregateRow.find(ref.id);
+                auto valueIt = Utils::findIdentifier(aggregateRow, ref.id);
                 if (valueIt == aggregateRow.end()) continue;
                 Value aggregateValue = valueIt->second;
                 if (!ref.format.empty()) {
@@ -699,7 +700,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             for (const Column* colPtr : selectedColumns) {
                 const auto& col = *colPtr;
 
-                auto it = rowValues.find(col.id);
+                auto it = Utils::findIdentifier(rowValues, col.id);
                 std::string cell = it == rowValues.end() ? std::string() : it->second;
                 if (Utils::ieq(col.id, "SCORE")) {
                     cell = groupScoreValue(cell, options);
@@ -738,17 +739,17 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             v = (int64_t)0;
         }
         else {
-            auto it = row0.find(src);
+            auto it = Utils::findIdentifier(row0, src);
             if (it != row0.end()) v = it->second;
         }
 
         const bool sourcePresent =
-            Utils::ieq(src, "index") || row0.find(src) != row0.end();
+            Utils::ieq(src, "index") || Utils::findIdentifier(row0, src) != row0.end();
         if (!sourcePresent) {
             bool synthesizesFromRow = false;
             const auto dependencies = collectFormatDeps(def.formats, f.format);
             for (const auto& dependency : dependencies) {
-                if (row0.find(dependency) != row0.end()) {
+                if (Utils::findIdentifier(row0, dependency) != row0.end()) {
                     synthesizesFromRow = true;
                     break;
                 }

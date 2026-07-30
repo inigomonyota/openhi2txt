@@ -520,7 +520,7 @@ static std::vector<uint8_t> buildTransformedBytes(const GameDef& def, const Elt&
         }
         else if (ieq(step, "bitmask")) {
             if (!e.bitmaskId.empty()) {
-                auto it = def.bitmasks.find(e.bitmaskId);
+                auto it = Utils::findIdentifier(def.bitmasks, e.bitmaskId);
                 if (it != def.bitmasks.end()) {
                     const BitmaskDef& bm = it->second;
 
@@ -696,7 +696,7 @@ static std::vector<CharsetStage> buildCharsetStages(const GameDef& def, const st
             continue;
         }
 
-        auto it = def.charsets.find(tok);
+        auto it = Utils::findIdentifier(def.charsets, tok);
         if (it != def.charsets.end()) {
             st.kind = CharsetStage::Map;
             st.map = &it->second;
@@ -952,7 +952,7 @@ static int applyTableIndexFormat(const GameDef& def, int base, const std::string
 
     // If it's a known <format id="...">, reuse your existing Formatter path.
     // This is ideal because klax uses <format id="*2"> etc.
-    auto it = def.formats.find(s);
+    auto it = Utils::findIdentifier(def.formats, s);
     if (it != def.formats.end()) {
         Value v = (int64_t)base;
         // row context irrelevant here; pass empty row and loopIndex=-1
@@ -1069,7 +1069,7 @@ static int resolveRowForElt(const GameDef& def,
         case TableIndexKind::IndexFromValue: {
             const int ctx = inLoop ? loopIdx : 0;
             if (ctx >= 0 && (size_t)ctx < rows.size()) {
-                auto it = rows[(size_t)ctx].find(e.tableIndexCol);
+                auto it = Utils::findIdentifier(rows[(size_t)ctx], e.tableIndexCol);
                 row = (it != rows[(size_t)ctx].end()) ? (int)Utils::valueToInt(it->second) : loopIdx;
             } else row = loopIdx;
         } break;
@@ -1078,7 +1078,7 @@ static int resolveRowForElt(const GameDef& def,
             const int target = inLoop ? loopIdx : 0;
             int found = -1;
             for (size_t r = 0; r < rows.size(); ++r) {
-                auto it = rows[r].find(e.tableIndexCol);
+                auto it = Utils::findIdentifier(rows[r], e.tableIndexCol);
                 if (it != rows[r].end() && (int)Utils::valueToInt(it->second) == target) { found = (int)r; break; }
             }
             row = (found >= 0) ? found : target;
@@ -1142,7 +1142,7 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
                 case TableIndexKind::IndexFromValue: {
                     const int ctx = inLoop ? loopIdx : 0;
                     if (ctx >= 0 && (size_t)ctx < rows.size()) {
-                        auto it = rows[(size_t)ctx].find(e.tableIndexCol);
+                        auto it = Utils::findIdentifier(rows[(size_t)ctx], e.tableIndexCol);
                         row = (it != rows[(size_t)ctx].end())
                             ? (int)Utils::valueToInt(it->second)
                             : loopIdx;
@@ -1156,7 +1156,7 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
                     const int target = inLoop ? loopIdx : 0;
                     int found = -1;
                     for (size_t r = 0; r < rows.size(); ++r) {
-                        auto it = rows[r].find(e.tableIndexCol);
+                        auto it = Utils::findIdentifier(rows[r], e.tableIndexCol);
                         if (it != rows[r].end() &&
                             (int)Utils::valueToInt(it->second) == target) {
                             found = (int)r;
@@ -1232,7 +1232,10 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
             if (!Utils::trim(el.format).empty())
                 v = Formatter::apply(def.formats, el.format, ensureRow(row), v, inLoop ? loopIdx : -1);
 
-            ensureRow(row)[el.id] = v;
+            auto& destination = ensureRow(row);
+            auto existingValue = Utils::findIdentifier(destination, el.id);
+            if (existingValue == destination.end()) destination.emplace(el.id, std::move(v));
+            else existingValue->second = std::move(v);
             lastRowTouched = row;
 
             if (trace) {

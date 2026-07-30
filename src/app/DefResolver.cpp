@@ -189,7 +189,8 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
             for (const auto& id : charsetIds) {
                 trace->line("TRACE: charset defined: " + id);
             }
-            if (std::find(charsetIds.begin(), charsetIds.end(), "CS_NUMBER") == charsetIds.end()) {
+            if (std::none_of(charsetIds.begin(), charsetIds.end(),
+                    [](const std::string& id) { return Utils::ieq(id, "CS_NUMBER"); })) {
                 trace->line("TRACE: charset defined: CS_NUMBER");
             }
         }

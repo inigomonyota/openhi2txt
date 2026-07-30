@@ -20,8 +20,11 @@ static void mergeRows(std::vector<std::unordered_map<std::string, Value>>& dst,
 
     for (size_t r = 0; r < src.size(); ++r) {
         for (const auto& kv : src[r]) {
-            if (!std::holds_alternative<std::monostate>(kv.second))
-                dst[r][kv.first] = kv.second;
+            if (std::holds_alternative<std::monostate>(kv.second)) continue;
+
+            auto existing = Utils::findIdentifier(dst[r], kv.first);
+            if (existing == dst[r].end()) dst[r].emplace(kv.first, kv.second);
+            else existing->second = kv.second;
         }
     }
 }

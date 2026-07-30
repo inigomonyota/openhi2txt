@@ -832,7 +832,11 @@ namespace openhi2txt {
 
 				}
 
-				if (!f.id.empty()) def.formats[f.id] = std::move(f);
+				if (!f.id.empty()) {
+					auto existing = Utils::findIdentifier(def.formats, f.id);
+					if (existing == def.formats.end()) def.formats.emplace(f.id, std::move(f));
+					else existing->second = std::move(f);
+				}
 			}
 			else if (ieq(nm, "charset")) {
 				Charset cs;
@@ -852,7 +856,11 @@ namespace openhi2txt {
 						}
 					}
 				}
-				if (!cs.id.empty()) def.charsets[cs.id] = std::move(cs);
+				if (!cs.id.empty()) {
+					auto existing = Utils::findIdentifier(def.charsets, cs.id);
+					if (existing == def.charsets.end()) def.charsets.emplace(cs.id, std::move(cs));
+					else existing->second = std::move(cs);
+				}
 			}
 			else if (ieq(nm, "bitmask")) {
 				BitmaskDef bm;
@@ -879,8 +887,11 @@ namespace openhi2txt {
 
 				bm.mergedMask = std::move(merged);
 
-				if (!bm.id.empty() && (!bm.charMasks.empty() || !bm.mergedMask.empty()))
-					def.bitmasks[bm.id] = std::move(bm);
+				if (!bm.id.empty() && (!bm.charMasks.empty() || !bm.mergedMask.empty())) {
+					auto existing = Utils::findIdentifier(def.bitmasks, bm.id);
+					if (existing == def.bitmasks.end()) def.bitmasks.emplace(bm.id, std::move(bm));
+					else existing->second = std::move(bm);
+				}
 			}
 			else if (ieq(nm, "structure")) {
 				Structure s;
@@ -1131,8 +1142,12 @@ namespace openhi2txt {
 			}
 			else if (ieq(nm, "output")) {
 				const std::string outId = attr(n, "id");               // "" means default output
-				const bool firstOutputWithId = def.outputs.find(outId) == def.outputs.end();
-				OutputDef& out = def.outputs[outId];
+				auto outputIt = Utils::findIdentifier(def.outputs, outId);
+				const bool firstOutputWithId = outputIt == def.outputs.end();
+				if (firstOutputWithId) {
+					outputIt = def.outputs.emplace(outId, OutputDef{}).first;
+				}
+				OutputDef& out = outputIt->second;
 				if (firstOutputWithId) def.outputOrder.push_back(outId);
 				out.id = outId;
 				const size_t firstTableIndex = out.tables.size();
