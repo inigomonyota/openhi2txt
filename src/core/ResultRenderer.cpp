@@ -258,7 +258,22 @@ static bool rowRelevantToTable(const GameDef& def,
         for (const auto& col : tab.cols) {
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
             if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
-            if (displayAllowed(col.display, options) && colHasData(col)) return true;
+            if (!displayAllowed(col.display, options)) continue;
+
+            bool hasInput = Utils::findIdentifier(row, src) != row.end();
+            if (!hasInput && !col.format.empty()) {
+                const auto dependencies = collectFormatDeps(def.formats, col.format);
+                for (const auto& dependency : dependencies) {
+                    if (Utils::findIdentifier(row, dependency) != row.end()) {
+                        hasInput = true;
+                        break;
+                    }
+                }
+            }
+
+            // A default format may turn a missing value into text such as
+            // "0". That must not populate rows belonging to another table.
+            if (hasInput && colHasData(col)) return true;
         }
     }
 
