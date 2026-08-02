@@ -223,6 +223,7 @@ static bool rowRelevantToTable(const GameDef& def,
     // is no ordinary non-index column.
     const Column* rangeColumn = nullptr;
     for (const auto& col : tab.cols) {
+        if (col.sourceRow == SourceRowKind::OutputIndex) continue;
         const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
         if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
         if (col.display.empty()) {
@@ -232,6 +233,7 @@ static bool rowRelevantToTable(const GameDef& def,
     }
     if (!rangeColumn) {
         for (const auto& col : tab.cols) {
+            if (col.sourceRow == SourceRowKind::OutputIndex) continue;
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
             if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
             if (displayAllowed(col.display, options)) {
@@ -242,6 +244,7 @@ static bool rowRelevantToTable(const GameDef& def,
     }
     if (!rangeColumn) {
         for (const auto& col : tab.cols) {
+            if (col.sourceRow == SourceRowKind::OutputIndex) continue;
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
             if (!Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
                 rangeColumn = &col;
@@ -256,6 +259,7 @@ static bool rowRelevantToTable(const GameDef& def,
     // sentinel (Tempest stores its final score without a name).
     if (!tab.ignoreRules.empty()) {
         for (const auto& col : tab.cols) {
+            if (col.sourceRow == SourceRowKind::OutputIndex) continue;
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
             if (Utils::ieq(src, "index") || Utils::ieq(src, "unsorted_index")) continue;
             if (!displayAllowed(col.display, options)) continue;
@@ -538,6 +542,13 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
 
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
 
+            const std::unordered_map<std::string, Value> emptySourceRow;
+            const std::unordered_map<std::string, Value>* sourceRow = &row;
+            if (col.sourceRow == SourceRowKind::OutputIndex &&
+                !Utils::ieq(src, "index") && !Utils::ieq(src, "unsorted_index")) {
+                sourceRow = rowIdx < rows.size() ? &rows[rowIdx] : &emptySourceRow;
+            }
+
             if (Utils::ieq(src, "index")) {
                 if (tab.sortKey.empty() && !tab.ignoreRules.empty()) {
                     auto it = row.find(kUnsortedIndexKey);
@@ -552,13 +563,13 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
                 v = (it != row.end()) ? it->second : Value((int64_t)rowIdx);
             }
             else {
-                auto it = Utils::findIdentifier(row, src);
-                if (it != row.end()) v = it->second;
+                auto it = Utils::findIdentifier(*sourceRow, src);
+                if (it != sourceRow->end()) v = it->second;
             }
 
             if (!col.format.empty()) {
                 v = Formatter::apply(def.formats, col.format,
-                    const_cast<std::unordered_map<std::string, Value>&>(row),
+                    *sourceRow,
                     v,
                     (int)rowIdx);
             }

@@ -190,6 +190,10 @@ struct Loop {
     int skipFirstBytes = 0;
     int skipLastBytes = 0;
 
+    bool hasStopCondition = false;
+    std::string stopFieldId;
+    std::string stopValue;
+
     std::vector<Elt> elts;
 };
 
@@ -217,7 +221,15 @@ struct Structure {
     std::vector<StructureItem> items;
 };
 
-struct Column { std::string id, src, format, display; };
+enum class SourceRowKind {
+    Current,
+    OutputIndex
+};
+
+struct Column {
+    std::string id, src, format, display;
+    SourceRowKind sourceRow = SourceRowKind::Current;
+};
 struct IgnoreRule { std::string colId; std::string value; };
 enum class IgnoreOp { And, Or };
 

@@ -134,6 +134,14 @@ namespace openhi2txt {
 		return allowed;
 	}
 
+	static const std::unordered_map<std::string, std::unordered_set<std::string>>& openExtensionAttrsByElement() {
+		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
+			{ "loop", { "stop-when" } },
+			{ "column", { "source-row" } },
+		};
+		return allowed;
+	}
+
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& allowedChildrenByElement() {
 		static const std::unordered_set<std::string> formatParts = {
 			"add", "increment", "prefix", "multiply", "divide", "suffix", "postfix", "sum", "concat",
@@ -194,7 +202,28 @@ namespace openhi2txt {
 		return out;
 	}
 
-	static bool validateDefinitionNode(rapidxml::xml_node<>* n, std::string& error) {
+	static bool parseIdValueCondition(const std::string& raw, std::string& id, std::string& value) {
+		const size_t colon = raw.find(':');
+		if (colon == std::string::npos) return false;
+		id = trim(raw.substr(0, colon));
+		value = trim(raw.substr(colon + 1));
+		return !id.empty() && !value.empty();
+	}
+
+	static bool isPositiveDecimal(const std::string& raw) {
+		const std::string value = trim(raw);
+		if (value.empty()) return false;
+		int parsed = 0;
+		for (const unsigned char ch : value) {
+			if (!std::isdigit(ch)) return false;
+			const int digit = ch - '0';
+			if (parsed > (std::numeric_limits<int>::max() - digit) / 10) return false;
+			parsed = parsed * 10 + digit;
+		}
+		return parsed > 0;
+	}
+
+	static bool validateDefinitionNode(rapidxml::xml_node<>* n, bool allowOpenExtensions, std::string& error) {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
@@ -208,7 +237,51 @@ namespace openhi2txt {
 		for (auto* a = n->first_attribute(); a; a = a->next_attribute()) {
 			const std::string attrName = a->name() ? a->name() : "";
 			if (attrIt->second.find(attrName) == attrIt->second.end()) {
+				const auto& extensionAttrs = openExtensionAttrsByElement();
+				const auto extensionIt = extensionAttrs.find(name);
+				const bool isOpenExtension = extensionIt != extensionAttrs.end() &&
+					extensionIt->second.find(attrName) != extensionIt->second.end();
+				if (isOpenExtension && allowOpenExtensions) continue;
+				if (isOpenExtension) {
+					error = "The '" + attrName + "' attribute on '" + name +
+						"' is an openhi2txt extension and requires the 'openhi2txt' root.";
+					return false;
+				}
 				error = "The '" + attrName + "' attribute is not declared.";
+				return false;
+			}
+		}
+
+		if (name == "loop" && n->first_attribute("stop-when")) {
+			std::string stopId;
+			std::string stopValue;
+			if (!parseIdValueCondition(attr(n, "stop-when"), stopId, stopValue)) {
+				error = "Invalid loop stop-when condition; expected ID:value.";
+				return false;
+			}
+			if (!n->first_attribute("count") || !isPositiveDecimal(attr(n, "count"))) {
+				error = "A loop using stop-when requires an explicit positive count safety ceiling.";
+				return false;
+			}
+
+			bool stopFieldDeclared = false;
+			for (auto* child = n->first_node("elt"); child; child = child->next_sibling("elt")) {
+				if (ieq(attr(child, "id"), stopId)) {
+					stopFieldDeclared = true;
+					break;
+				}
+			}
+			if (!stopFieldDeclared) {
+				error = "The loop stop-when field '" + stopId + "' is not declared by an elt in that loop.";
+				return false;
+			}
+		}
+
+		if (name == "column" && n->first_attribute("source-row")) {
+			const std::string sourceRow = attr(n, "source-row");
+			if (!ieq(sourceRow, "output_index")) {
+				error = "Unsupported column source-row value '" + sourceRow +
+					"'; expected output_index.";
 				return false;
 			}
 		}
@@ -235,7 +308,7 @@ namespace openhi2txt {
 				return false;
 			}
 
-			if (!validateDefinitionNode(c, error)) return false;
+			if (!validateDefinitionNode(c, allowOpenExtensions, error)) return false;
 		}
 
 		return true;
@@ -1230,6 +1303,10 @@ namespace openhi2txt {
 							it.loop.skipLastBytes = std::atoi(attr(c, "skip-last-bytes").c_str());
 							if (it.loop.skipLastBytes < 0) it.loop.skipLastBytes = 0;
 						}
+						if (c->first_attribute("stop-when")) {
+							it.loop.hasStopCondition = parseIdValueCondition(
+								attr(c, "stop-when"), it.loop.stopFieldId, it.loop.stopValue);
+						}
 
 						for (auto* ee = c->first_node("elt"); ee; ee = ee->next_sibling("elt"))
 							it.loop.elts.push_back(parseE(ee));
@@ -1279,6 +1356,8 @@ namespace openhi2txt {
 
 						if (ieq(cn, "column") || ieq(cn, "field")) {
 							Column col{ attr(c, "id"), attr(c, "src"), formatAttr(c), attr(c, "display") };
+							if (c->first_attribute("source-row") && ieq(attr(c, "source-row"), "output_index"))
+								col.sourceRow = SourceRowKind::OutputIndex;
 
 							if (trim(col.src).empty()) col.src = col.id;
 							if (col.id.empty() && !col.src.empty()) col.id = col.src;
@@ -1364,7 +1443,8 @@ namespace openhi2txt {
 		}
 
 		std::string schemaError;
-		if (!validateDefinitionNode(root, schemaError)) {
+		const bool allowOpenExtensions = ieq(elementName(root), "openhi2txt");
+		if (!validateDefinitionNode(root, allowOpenExtensions, schemaError)) {
 			res.error = schemaError;
 			res.errorKind = XmlParseErrorKind::Schema;
 			return res;

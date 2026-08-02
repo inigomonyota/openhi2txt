@@ -1,13 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(openhi2txt
-    VERSION 0.1.0
+    VERSION 0.2.0
     LANGUAGES CXX
 )
 
 option(OPENHI2TXT_BUILD_CLI "Build the openhi2txt command-line executable" ON)
+option(BUILD_TESTING "Build the openhi2txt test executables" ON)
 
-include(CTest)
+if(BUILD_TESTING)
+    enable_testing()
+endif()
 
 set(OPENHI2TXT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(OPENHI2TXT_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -37,6 +40,10 @@ add_library(openhi2txt STATIC
 add_library(openhi2txt::openhi2txt ALIAS openhi2txt)
 
 target_compile_features(openhi2txt PUBLIC cxx_std_17)
+
+set_target_properties(openhi2txt PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lib"
+)
 
 if(MSVC)
     set_target_properties(openhi2txt PROPERTIES
@@ -132,7 +139,12 @@ if(OPENHI2TXT_BUILD_CLI)
         src/app/OutputPrinter.cpp
         ${OPENHI2TXT_CLI_RESOURCES}
     )
-    set_target_properties(openhi2txt_cli PROPERTIES OUTPUT_NAME openhi2txt)
+    set_target_properties(openhi2txt_cli PROPERTIES
+        OUTPUT_NAME openhi2txt
+        ARCHIVE_OUTPUT_NAME openhi2txt_cli
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lib"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/bin"
+    )
     if(MSVC)
         set_target_properties(openhi2txt_cli PROPERTIES
             VS_GLOBAL_VcpkgEnabled false
@@ -143,25 +155,7 @@ if(OPENHI2TXT_BUILD_CLI)
     target_link_libraries(openhi2txt_cli PRIVATE openhi2txt)
     target_include_directories(openhi2txt_cli PRIVATE "${OPENHI2TXT_SRC_DIR}")
 
-    install(TARGETS openhi2txt_cli RUNTIME DESTINATION bin)
 endif()
-
-install(TARGETS openhi2txt
-    EXPORT openhi2txtTargets
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
-install(DIRECTORY include/ DESTINATION include)
-install(FILES
-    "${OPENHI2TXT_GENERATED_INCLUDE_DIR}/openhi2txt/version.h"
-    DESTINATION include/openhi2txt
-)
-install(EXPORT openhi2txtTargets
-    NAMESPACE openhi2txt::
-    DESTINATION lib/cmake/openhi2txt
-)
 
 if(BUILD_TESTING)
     add_executable(openhi2txt_xml_parser_tests
@@ -169,5 +163,19 @@ if(BUILD_TESTING)
     )
     target_link_libraries(openhi2txt_xml_parser_tests PRIVATE openhi2txt)
     target_include_directories(openhi2txt_xml_parser_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_xml_parser_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
     add_test(NAME openhi2txt_xml_parser_tests COMMAND openhi2txt_xml_parser_tests)
+
+    add_executable(openhi2txt_open_extension_tests
+        tests/OpenExtensionTests.cpp
+        src/app/OutputPrinter.cpp
+    )
+    target_link_libraries(openhi2txt_open_extension_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_open_extension_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_open_extension_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    add_test(NAME openhi2txt_open_extension_tests COMMAND openhi2txt_open_extension_tests)
 endif()

@@ -1106,10 +1106,15 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
 
     int lastRowTouched = 0;
 
+    using Row = std::unordered_map<std::string, Value>;
+    std::vector<Row>* activeRows = &rows;
+    int* activeLastRowTouched = &lastRowTouched;
+    std::unordered_map<std::string, Value>* activeIterationValues = nullptr;
+
     auto ensureRow = [&](int r) -> std::unordered_map<std::string, Value>& {
         if (r < 0) r = 0;
-        if (rows.size() <= (size_t)r) rows.resize((size_t)r + 1);
-        return rows[(size_t)r];
+        if (activeRows->size() <= (size_t)r) activeRows->resize((size_t)r + 1);
+        return (*activeRows)[(size_t)r];
     };
 
     auto resolveRowForElt2 =
@@ -1135,15 +1140,15 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
                 break;
 
                 case TableIndexKind::Last:
-                row = lastRowTouched;
+                row = *activeLastRowTouched;
                 if (row < 0) row = 0;
                 break;
 
                 case TableIndexKind::IndexFromValue: {
                     const int ctx = inLoop ? loopIdx : 0;
-                    if (ctx >= 0 && (size_t)ctx < rows.size()) {
-                        auto it = Utils::findIdentifier(rows[(size_t)ctx], e.tableIndexCol);
-                        row = (it != rows[(size_t)ctx].end())
+                    if (ctx >= 0 && (size_t)ctx < activeRows->size()) {
+                        auto it = Utils::findIdentifier((*activeRows)[(size_t)ctx], e.tableIndexCol);
+                        row = (it != (*activeRows)[(size_t)ctx].end())
                             ? (int)Utils::valueToInt(it->second)
                             : loopIdx;
                     }
@@ -1155,9 +1160,9 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
                 case TableIndexKind::ValueFromIndex: {
                     const int target = inLoop ? loopIdx : 0;
                     int found = -1;
-                    for (size_t r = 0; r < rows.size(); ++r) {
-                        auto it = Utils::findIdentifier(rows[r], e.tableIndexCol);
-                        if (it != rows[r].end() &&
+                    for (size_t r = 0; r < activeRows->size(); ++r) {
+                        auto it = Utils::findIdentifier((*activeRows)[r], e.tableIndexCol);
+                        if (it != (*activeRows)[r].end() &&
                             (int)Utils::valueToInt(it->second) == target) {
                             found = (int)r;
                             break;
@@ -1232,11 +1237,17 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
             if (!Utils::trim(el.format).empty())
                 v = Formatter::apply(def.formats, el.format, ensureRow(row), v, inLoop ? loopIdx : -1);
 
+            if (activeIterationValues && !el.id.empty()) {
+                auto existing = Utils::findIdentifier(*activeIterationValues, el.id);
+                if (existing == activeIterationValues->end()) activeIterationValues->emplace(el.id, v);
+                else existing->second = v;
+            }
+
             auto& destination = ensureRow(row);
             auto existingValue = Utils::findIdentifier(destination, el.id);
             if (existingValue == destination.end()) destination.emplace(el.id, std::move(v));
             else existingValue->second = std::move(v);
-            lastRowTouched = row;
+            *activeLastRowTouched = row;
 
             if (trace) {
                 const size_t bytesRead = std::min(raw.size(), p + (size_t)std::max(0, decodeEl->size));
@@ -1283,6 +1294,16 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
         size_t loopCursor = cursor;
 
         for (int i = 0; i < count; ++i) {
+            std::vector<Row> candidateRows;
+            int candidateLastRowTouched = lastRowTouched;
+            std::unordered_map<std::string, Value> iterationValues;
+            if (lp.hasStopCondition) {
+                candidateRows = rows;
+                activeRows = &candidateRows;
+                activeLastRowTouched = &candidateLastRowTouched;
+                activeIterationValues = &iterationValues;
+            }
+
             const bool isLast = (i == count - 1);
             const int byteLimit = isLast ? lastIterLimit : iterBytesFull;
             const int skipPrefix = (i == 0) ? std::max(0, lp.skipFirstBytes) : 0;
@@ -1339,6 +1360,26 @@ std::vector<std::unordered_map<std::string, Value>> Processor::extractRows(const
 
             loopCursor = iterBase + (size_t)fileBytesThisIter;
             if (loopCursor > raw.size()) loopCursor = raw.size();
+
+            if (lp.hasStopCondition) {
+                activeRows = &rows;
+                activeLastRowTouched = &lastRowTouched;
+                activeIterationValues = nullptr;
+
+                const auto stopValue = Utils::findIdentifier(iterationValues, lp.stopFieldId);
+                const bool shouldStop = stopValue != iterationValues.end() &&
+                    Utils::ieq(Utils::valueToString(stopValue->second), lp.stopValue);
+                if (shouldStop) {
+                    if (trace) {
+                        trace->line("TRACE: structure loop stop-when matched at index=" +
+                            std::to_string(i) + ": " + lp.stopFieldId + ":" + lp.stopValue);
+                    }
+                    break;
+                }
+
+                rows = std::move(candidateRows);
+                lastRowTouched = candidateLastRowTouched;
+            }
         }
 
         cursor = std::max(cursor, loopCursor);

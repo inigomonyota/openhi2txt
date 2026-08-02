@@ -9,6 +9,8 @@ definitions. It is both:
 Build: CMake with Visual Studio 2022 (v143) x64, Ninja, or another C++17 compiler.
 
 Detailed library and CLI usage is documented in [docs/usage.md](docs/usage.md).
+Definition authors should use the
+[OpenHi2txt definition XML reference](docs/xml-reference.md).
 
 ## Definition Compatibility
 
@@ -26,7 +28,7 @@ declare the minimum openhi2txt version they require:
 
 ```xml
 <!DOCTYPE openhi2txt>
-<openhi2txt requires="0.1.0" label="Example" ingame-score="true">
+<openhi2txt requires="0.2.0" label="Example" ingame-score="true">
     <!-- definition -->
 </openhi2txt>
 ```
@@ -36,6 +38,10 @@ legacy `hi2txt` root, plus the mandatory `requires="MAJOR.MINOR.PATCH"`
 attribute. It rejects a definition before processing when the required version
 is newer than the running version. Use the legacy root until a definition
 actually depends on an openhi2txt extension.
+
+Version 0.2.0 adds two opt-in definition extensions: terminated loops with
+`loop@stop-when` and positional output lookup with
+`column@source-row="output_index"`. Neither changes behavior when omitted.
 
 ## Use It As A Library
 
