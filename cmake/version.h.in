@@ -1,0 +1,10 @@
+#pragma once
+
+namespace openhi2txt {
+
+inline constexpr int VersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int VersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int VersionPatch = @PROJECT_VERSION_PATCH@;
+inline constexpr const char* VersionString = "@PROJECT_VERSION@";
+
+} // namespace openhi2txt

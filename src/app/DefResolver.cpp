@@ -149,7 +149,9 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
 
         if (trace) {
             trace->line("TRACE: reading a description from file: " + defsZip.string() + ", entry " + cand + ".xml");
-            trace->line("TRACE: reading dtd from file: " + defsZip.string() + ", entry hi2txt.dtd");
+            if (!Utils::ieq(XmlParser::getRootName(tmp), "openhi2txt")) {
+                trace->line("TRACE: reading dtd from file: " + defsZip.string() + ", entry hi2txt.dtd");
+            }
         }
 
         // chase <sameas id="..."> (bounded)
@@ -166,9 +168,14 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
         if (!parsedRes.ok) {
             res.ok = false;
             res.errorKind = HiScoreErrorKind::DefinitionInvalid;
-            res.error = "ERROR: unable to find DTD file: " + parsedRes.error + "\n" +
-                        "ERROR: unable to find DTD file: " + parsedRes.error + "\n" +
-                        "ERROR: No content inside XML description for ROM '" + requestedGame + "'";
+            if (parsedRes.errorKind == XmlParseErrorKind::VersionRequirement) {
+                res.error = "ERROR: " + parsedRes.error;
+            }
+            else {
+                res.error = "ERROR: unable to find DTD file: " + parsedRes.error + "\n" +
+                            "ERROR: unable to find DTD file: " + parsedRes.error + "\n" +
+                            "ERROR: No content inside XML description for ROM '" + requestedGame + "'";
+            }
             return res;
         }
 

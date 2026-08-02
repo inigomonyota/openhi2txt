@@ -6,11 +6,36 @@ definitions. It is both:
 - an embeddable C++ library for frontends, launchers, tools, and scrapers
 - an optional command-line executable for hi2txt-compatible CLI workflows
 
-Current version: `0.1.0`
-
 Build: CMake with Visual Studio 2022 (v143) x64, Ninja, or another C++17 compiler.
 
 Detailed library and CLI usage is documented in [docs/usage.md](docs/usage.md).
+
+## Definition Compatibility
+
+Existing definitions keep the original hi2txt root and behavior unchanged:
+
+```xml
+<!DOCTYPE hi2txt SYSTEM "hi2txt.dtd">
+<hi2txt label="Example">
+    <!-- definition -->
+</hi2txt>
+```
+
+Definitions that use openhi2txt-only functionality use an alternative root and
+declare the minimum openhi2txt version they require:
+
+```xml
+<!DOCTYPE openhi2txt>
+<openhi2txt requires="0.1.0" label="Example" ingame-score="true">
+    <!-- definition -->
+</openhi2txt>
+```
+
+`openhi2txt` accepts all attributes and children currently accepted by the
+legacy `hi2txt` root, plus the mandatory `requires="MAJOR.MINOR.PATCH"`
+attribute. It rejects a definition before processing when the required version
+is newer than the running version. Use the legacy root until a definition
+actually depends on an openhi2txt extension.
 
 ## Use It As A Library
 
@@ -89,4 +114,3 @@ Third-party notes:
 - Linux expects zlib/minizip from the system or explicit CMake paths.
 - Dependency licenses and source details are listed in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-

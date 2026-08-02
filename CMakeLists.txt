@@ -7,9 +7,18 @@ project(openhi2txt
 
 option(OPENHI2TXT_BUILD_CLI "Build the openhi2txt command-line executable" ON)
 
+include(CTest)
+
 set(OPENHI2TXT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(OPENHI2TXT_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(OPENHI2TXT_THIRDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty")
+set(OPENHI2TXT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
+    "${OPENHI2TXT_GENERATED_INCLUDE_DIR}/openhi2txt/version.h"
+    @ONLY
+)
 
 add_library(openhi2txt STATIC
     src/openhi2txt.cpp
@@ -39,6 +48,7 @@ endif()
 target_include_directories(openhi2txt
     PUBLIC
         "$<BUILD_INTERFACE:${OPENHI2TXT_INCLUDE_DIR}>"
+        "$<BUILD_INTERFACE:${OPENHI2TXT_GENERATED_INCLUDE_DIR}>"
         "$<INSTALL_INTERFACE:include>"
     PRIVATE
         "${OPENHI2TXT_SRC_DIR}"
@@ -144,7 +154,20 @@ install(TARGETS openhi2txt
     INCLUDES DESTINATION include
 )
 install(DIRECTORY include/ DESTINATION include)
+install(FILES
+    "${OPENHI2TXT_GENERATED_INCLUDE_DIR}/openhi2txt/version.h"
+    DESTINATION include/openhi2txt
+)
 install(EXPORT openhi2txtTargets
     NAMESPACE openhi2txt::
     DESTINATION lib/cmake/openhi2txt
 )
+
+if(BUILD_TESTING)
+    add_executable(openhi2txt_xml_parser_tests
+        tests/XmlParserTests.cpp
+    )
+    target_link_libraries(openhi2txt_xml_parser_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_xml_parser_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    add_test(NAME openhi2txt_xml_parser_tests COMMAND openhi2txt_xml_parser_tests)
+endif()

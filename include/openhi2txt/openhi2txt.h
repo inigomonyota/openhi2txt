@@ -8,12 +8,9 @@
 #include <unordered_set>
 #include <vector>
 
-namespace openhi2txt {
+#include <openhi2txt/version.h>
 
-inline constexpr int VersionMajor = 0;
-inline constexpr int VersionMinor = 1;
-inline constexpr int VersionPatch = 0;
-inline constexpr const char* VersionString = "0.1.0";
+namespace openhi2txt {
 
 enum class ScoreSource {
     None,

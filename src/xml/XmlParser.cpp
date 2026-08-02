@@ -1,10 +1,12 @@
 #include "xml/XmlParser.h"
 #include "xml/EntityMapper.h"
 #include "io/Utils.h"
+#include "openhi2txt/openhi2txt.h"
 
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -81,6 +83,7 @@ namespace openhi2txt {
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& allowedAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "label", "ingame-score" } },
+			{ "openhi2txt", { "requires", "label", "ingame-score" } },
 			{ "structure", { "file", "output", "byte-swap" } },
 			{ "check", {} },
 			{ "definition", { "offset" } },
@@ -142,6 +145,7 @@ namespace openhi2txt {
 		static const std::unordered_set<std::string> concatChildren = { "field", "column", "txt" };
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
+			{ "openhi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
 			{ "structure", { "check", "elt", "loop" } },
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
@@ -232,6 +236,88 @@ namespace openhi2txt {
 			}
 
 			if (!validateDefinitionNode(c, error)) return false;
+		}
+
+		return true;
+	}
+
+	struct DefinitionVersion {
+		int major = 0;
+		int minor = 0;
+		int patch = 0;
+	};
+
+	static bool parseVersionComponent(const std::string& text, size_t begin, size_t end, int& value) {
+		if (begin == end) return false;
+		if (end - begin > 1 && text[begin] == '0') return false;
+
+		int parsed = 0;
+		for (size_t i = begin; i < end; ++i) {
+			const unsigned char ch = static_cast<unsigned char>(text[i]);
+			if (!std::isdigit(ch)) return false;
+			const int digit = text[i] - '0';
+			if (parsed > (std::numeric_limits<int>::max() - digit) / 10) return false;
+			parsed = parsed * 10 + digit;
+		}
+
+		value = parsed;
+		return true;
+	}
+
+	static bool parseDefinitionVersion(const std::string& text, DefinitionVersion& version) {
+		const size_t firstDot = text.find('.');
+		if (firstDot == std::string::npos) return false;
+		const size_t secondDot = text.find('.', firstDot + 1);
+		if (secondDot == std::string::npos || text.find('.', secondDot + 1) != std::string::npos) return false;
+
+		return parseVersionComponent(text, 0, firstDot, version.major) &&
+			parseVersionComponent(text, firstDot + 1, secondDot, version.minor) &&
+			parseVersionComponent(text, secondDot + 1, text.size(), version.patch);
+	}
+
+	static bool versionIsNewerThanOpenHi2txt(const DefinitionVersion& required) {
+		if (required.major != VersionMajor) return required.major > VersionMajor;
+		if (required.minor != VersionMinor) return required.minor > VersionMinor;
+		return required.patch > VersionPatch;
+	}
+
+	static rapidxml::xml_node<>* firstElementNode(rapidxml::xml_document<>& doc) {
+		for (auto* node = doc.first_node(); node; node = node->next_sibling()) {
+			if (node->type() == rapidxml::node_element) return node;
+		}
+		return nullptr;
+	}
+
+	static std::string elementName(const rapidxml::xml_node<>* node) {
+		if (!node || !node->name()) return "";
+		return std::string(node->name(), node->name_size());
+	}
+
+	static bool isDefinitionRoot(const rapidxml::xml_node<>* root) {
+		const std::string name = elementName(root);
+		return ieq(name, "hi2txt") || ieq(name, "openhi2txt");
+	}
+
+	static bool validateOpenHi2txtRequirement(rapidxml::xml_node<>* root, std::string& error) {
+		if (!ieq(elementName(root), "openhi2txt")) return true;
+
+		const std::string requiredText = attr(root, "requires");
+		if (requiredText.empty()) {
+			error = "The 'requires' attribute is required on the 'openhi2txt' element.";
+			return false;
+		}
+
+		DefinitionVersion required;
+		if (!parseDefinitionVersion(requiredText, required)) {
+			error = "Invalid openhi2txt version requirement '" + requiredText +
+				"'; expected MAJOR.MINOR.PATCH.";
+			return false;
+		}
+
+		if (versionIsNewerThanOpenHi2txt(required)) {
+			error = "This definition requires openhi2txt " + requiredText +
+				" or newer; running version is " + VersionString + ".";
+			return false;
 		}
 
 		return true;
@@ -582,8 +668,10 @@ namespace openhi2txt {
 		try { doc.parse<parse_non_destructive>(&buf[0]); }
 		catch (...) { return ""; }
 
-		auto* root = doc.first_node("hi2txt");
-		if (!root) return "";
+		auto* root = firstElementNode(doc);
+		if (!isDefinitionRoot(root)) return "";
+		std::string requirementError;
+		if (!validateOpenHi2txtRequirement(root, requirementError)) return "";
 
 		// accept both <sameas id="pacman"/> and <sameas>pacman</sameas>
 		if (auto* sa = root->first_node("sameas")) {
@@ -597,6 +685,19 @@ namespace openhi2txt {
 		return "";
 	}
 
+	std::string XmlParser::getRootName(const std::string& xmlText) {
+		using namespace rapidxml;
+
+		std::string buf = xmlText;
+		buf.push_back('\0');
+
+		xml_document<> doc;
+		try { doc.parse<parse_non_destructive>(&buf[0]); }
+		catch (...) { return ""; }
+
+		return elementName(firstElementNode(doc));
+	}
+
 	static GameDef parseUnchecked(const std::string& xml) {
 		GameDef def;
 
@@ -607,9 +708,8 @@ namespace openhi2txt {
 		try { doc.parse<0>(buf.data()); }
 		catch (...) { return def; }
 
-		auto* root = doc.first_node("hi2txt");
-		if (!root) root = doc.first_node();
-		if (!root) return def;
+		auto* root = firstElementNode(doc);
+		if (!isDefinitionRoot(root)) return def;
 
 		for (auto* n = root->first_node(); n; n = n->next_sibling()) {
 			const char* nm = n->name();
@@ -1235,27 +1335,38 @@ namespace openhi2txt {
 		}
 		catch (const rapidxml::parse_error& e) {
 			res.error = parseErrorWithLocation(e.what(), buf.data(), e.where<char>());
+			res.errorKind = XmlParseErrorKind::Syntax;
 			return res;
 		}
 		catch (const std::exception& e) {
 			res.error = e.what();
+			res.errorKind = XmlParseErrorKind::Syntax;
 			return res;
 		}
 		catch (...) {
 			res.error = "Unknown XML parse error.";
+			res.errorKind = XmlParseErrorKind::Syntax;
 			return res;
 		}
 
-		auto* root = doc.first_node("hi2txt");
-		if (!root) root = doc.first_node();
+		auto* root = firstElementNode(doc);
 		if (!root) {
 			res.error = "No root element found.";
+			res.errorKind = XmlParseErrorKind::Schema;
+			return res;
+		}
+
+		std::string requirementError;
+		if (!validateOpenHi2txtRequirement(root, requirementError)) {
+			res.error = requirementError;
+			res.errorKind = XmlParseErrorKind::VersionRequirement;
 			return res;
 		}
 
 		std::string schemaError;
 		if (!validateDefinitionNode(root, schemaError)) {
 			res.error = schemaError;
+			res.errorKind = XmlParseErrorKind::Schema;
 			return res;
 		}
 
