@@ -136,6 +136,7 @@ namespace openhi2txt {
 
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& openExtensionAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
+			{ "structure", { "offset", "length" } },
 			{ "loop", { "stop-when" } },
 			{ "column", { "source-row" } },
 		};
@@ -223,6 +224,35 @@ namespace openhi2txt {
 		return parsed > 0;
 	}
 
+	static bool parseUint64(const std::string& raw, uint64_t& value) {
+		const std::string text = trim(raw);
+		if (text.empty() || text[0] == '-' || text[0] == '+') return false;
+
+		size_t position = 0;
+		uint64_t base = 10;
+		if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+			position = 2;
+			base = 16;
+		}
+		if (position == text.size()) return false;
+
+		uint64_t parsed = 0;
+		for (; position < text.size(); ++position) {
+			const unsigned char ch = static_cast<unsigned char>(text[position]);
+			uint64_t digit = 0;
+			if (ch >= '0' && ch <= '9') digit = ch - '0';
+			else if (base == 16 && ch >= 'a' && ch <= 'f') digit = ch - 'a' + 10;
+			else if (base == 16 && ch >= 'A' && ch <= 'F') digit = ch - 'A' + 10;
+			else return false;
+			if (digit >= base || parsed > (std::numeric_limits<uint64_t>::max() - digit) / base)
+				return false;
+			parsed = parsed * base + digit;
+		}
+
+		value = parsed;
+		return true;
+	}
+
 	static bool validateDefinitionNode(rapidxml::xml_node<>* n, bool allowOpenExtensions, std::string& error) {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
@@ -274,6 +304,36 @@ namespace openhi2txt {
 			if (!stopFieldDeclared) {
 				error = "The loop stop-when field '" + stopId + "' is not declared by an elt in that loop.";
 				return false;
+			}
+		}
+
+		if (name == "structure") {
+			const bool isDif = ieq(attr(n, "file"), "dif");
+			const bool hasOffset = n->first_attribute("offset") != nullptr;
+			const bool hasLength = n->first_attribute("length") != nullptr;
+			if (isDif && !allowOpenExtensions) {
+				error = "The file='dif' structure input is an openhi2txt extension and requires the 'openhi2txt' root.";
+				return false;
+			}
+			if ((hasOffset || hasLength) && !isDif) {
+				error = "The structure offset and length attributes are only supported with file='dif'.";
+				return false;
+			}
+			if (isDif && (!hasOffset || !hasLength)) {
+				error = "A structure using file='dif' requires both offset and length attributes.";
+				return false;
+			}
+			if (isDif) {
+				uint64_t offset = 0;
+				uint64_t length = 0;
+				if (!parseUint64(attr(n, "offset"), offset)) {
+					error = "Invalid structure offset; expected a non-negative decimal or hexadecimal byte offset.";
+					return false;
+				}
+				if (!parseUint64(attr(n, "length"), length) || length == 0) {
+					error = "Invalid structure length; expected a positive decimal or hexadecimal byte count.";
+					return false;
+				}
 			}
 		}
 
@@ -1069,6 +1129,11 @@ namespace openhi2txt {
 			else if (ieq(nm, "structure")) {
 				Structure s;
 				s.fileKind = attr(n, "file");
+				if (ieq(s.fileKind, "dif")) {
+					s.hasInputWindow = true;
+					parseUint64(attr(n, "offset"), s.inputOffset);
+					parseUint64(attr(n, "length"), s.inputLength);
+				}
 				s.byteSwap = std::atoi(attr(n, "byte-swap").c_str());
 				s.outputId = attr(n, "output");
 

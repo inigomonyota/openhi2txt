@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(openhi2txt
-    VERSION 0.2.0
+    VERSION 0.3.0
     LANGUAGES CXX
 )
 
@@ -32,6 +32,7 @@ add_library(openhi2txt STATIC
     src/core/ResultRenderer.cpp
     src/core/StructureSelector.cpp
     src/io/ArchiveManager.cpp
+    src/io/ChdReader.cpp
     src/io/HiscoreDat.cpp
     src/io/Utils.cpp
     src/xml/XmlParser.cpp
@@ -84,11 +85,11 @@ if(WIN32 AND MSVC)
         )
     endif()
 
-    add_library(openhi2txt_zlib STATIC IMPORTED)
-    set_target_properties(openhi2txt_zlib PROPERTIES
-        IMPORTED_LOCATION "${OPENHI2TXT_BUNDLED_ZLIB_LIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}"
-    )
+    set(ZLIB_INCLUDE_DIR "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}" CACHE PATH
+        "Path to the zlib headers used by openhi2txt" FORCE)
+    set(ZLIB_LIBRARY "${OPENHI2TXT_BUNDLED_ZLIB_LIB}" CACHE FILEPATH
+        "Path to the static zlib library used by openhi2txt" FORCE)
+    find_package(ZLIB REQUIRED)
 
     add_library(openhi2txt_minizip STATIC IMPORTED)
     set_target_properties(openhi2txt_minizip PROPERTIES
@@ -96,7 +97,7 @@ if(WIN32 AND MSVC)
         INTERFACE_INCLUDE_DIRECTORIES "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}"
     )
 
-    target_link_libraries(openhi2txt PRIVATE openhi2txt_zlib openhi2txt_minizip)
+    target_link_libraries(openhi2txt PRIVATE ZLIB::ZLIB openhi2txt_minizip)
     target_compile_definitions(openhi2txt PRIVATE ZLIB_STATIC)
 else()
     find_package(ZLIB REQUIRED)
@@ -118,6 +119,27 @@ else()
     target_include_directories(openhi2txt PRIVATE "${MINIZIP_INCLUDE_DIR}")
     target_link_libraries(openhi2txt PRIVATE ZLIB::ZLIB "${MINIZIP_LIBRARY}")
 endif()
+
+# libchdr is pinned as a submodule and built statically. It reuses the zlib
+# target selected above, while CD/GD-ROM support is excluded because
+# openhi2txt reads writable hard-disk images and their delta overlays.
+function(openhi2txt_add_libchdr)
+    set(BUILD_SHARED_LIBS OFF)
+    set(INSTALL_STATIC_LIBS OFF CACHE BOOL "Install libchdr static libraries" FORCE)
+    set(WITH_SYSTEM_ZLIB ON CACHE BOOL "Use openhi2txt's selected zlib for libchdr" FORCE)
+    set(WITH_SYSTEM_ZSTD OFF CACHE BOOL "Use libchdr's bundled Zstandard decoder" FORCE)
+    set(CHDR_ENABLE_CD OFF CACHE BOOL "Enable libchdr CD/GD-ROM support" FORCE)
+    set(CHDR_WANT_RAW_DATA_SECTOR OFF CACHE BOOL "Reconstruct raw CD sectors" FORCE)
+    set(CHDR_WANT_SUBCODE OFF CACHE BOOL "Output CD subchannel data" FORCE)
+    set(BUILD_FUZZER OFF CACHE BOOL "Build libchdr's fuzz target" FORCE)
+    add_subdirectory(
+        "${OPENHI2TXT_THIRDPARTY_DIR}/libchdr"
+        "${CMAKE_CURRENT_BINARY_DIR}/thirdparty/libchdr"
+        EXCLUDE_FROM_ALL
+    )
+endfunction()
+openhi2txt_add_libchdr()
+target_link_libraries(openhi2txt PRIVATE chdr-static)
 
 if(OPENHI2TXT_BUILD_CLI)
     set(OPENHI2TXT_CLI_RESOURCES)

@@ -41,22 +41,22 @@ openhi2txt::HiScoreResult result = context.readGame("galaga", read);
 ```
 
 `definitionsZip` should point to the ZIP containing hi2txt XML definitions.
-`mameRoot` should point to the MAME folder containing `hiscore`, `nvram`, and
-optionally `plugins/hiscore/hiscore.dat`.
+`mameRoot` should point to the MAME folder containing `hiscore`, `nvram`,
+`diff`, and `roms`, and optionally `plugins/hiscore/hiscore.dat`.
 `defaultsZip` and `scoresDirectory` provide persisted, already-rendered display
 tables for fast frontend reads.
 
 ## Source Priority
 
 `readGame()` is intended for fast frontend display reads. It does not inspect
-live `.hi` or nvram data. It returns the best persisted display source in this
+live `.hi`, NVRAM, or DIF-backed data. It returns the best persisted display source in this
 order:
 
 1. Saved rendered score XML under `scoresDirectory`
 2. Default rendered score XML from `defaultsZip`
 
 `refreshGame()` is intended for controlled update moments, such as after a user
-exits a game. It reads live `.hi` or nvram data under `mameRoot` using
+exits a game. It reads live `.hi`, NVRAM, or DIF-backed data under `mameRoot` using
 `definitionsZip`. If decoding succeeds, it returns the live result and writes a
 rendered XML snapshot to `scoresDirectory/<game>.xml` when `scoresDirectory` is
 set.
@@ -76,7 +76,7 @@ openhi2txt::ScoreSource::DefaultFallback
 openhi2txt::ScoreSource::None
 ```
 
-If live `.hi` or nvram data exists but cannot be matched or decoded, OpenHi2txt
+If live `.hi`, NVRAM, or DIF-backed data exists but cannot be matched or decoded, OpenHi2txt
 does not write a saved score XML. The caller can keep its existing in-memory
 display entry and call `readGame()` separately if it wants to reload persisted
 data.
@@ -114,7 +114,7 @@ opts.defaultsZip = "path/to/hi2txt_defaults.zip";
 ```
 
 With no `scoresDirectory`, `readGame()` reads only defaults. `refreshGame()`
-can still read live `.hi` or nvram data, but no saved XML writeback is attempted.
+can still read live `.hi`, NVRAM, or DIF-backed data, but no saved XML writeback is attempted.
 
 ## Defaults
 
@@ -210,7 +210,7 @@ if (result.ok) {
 }
 ```
 
-If the live `.hi` or nvram data contains a valid score table, the saved score
+If the live `.hi`, NVRAM, or DIF-backed data contains a valid score table, the saved score
 XML is updated and the returned result contains the live data. If not, no saved
 XML is written and the frontend can keep its existing cached display entry.
 

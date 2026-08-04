@@ -89,7 +89,7 @@ declare its minimum required version:
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE openhi2txt>
-<openhi2txt requires="0.2.0" label="Example">
+<openhi2txt requires="0.3.0" label="Example">
   <!-- definition -->
 </openhi2txt>
 ```
@@ -103,7 +103,9 @@ The `openhi2txt` root supports the same attributes and children as `hi2txt`,
 plus the required `requires` attribute and explicitly documented extensions.
 Version 0.2.0 introduces `loop@stop-when` and
 `column@source-row="output_index"`. Existing definitions should keep the legacy
-root until they actually use an extension. The root alone never changes
+root until they actually use an extension. Version 0.3.0 introduces bounded
+logical-disk input with `structure@file="dif"`, `structure@offset`, and
+`structure@length`. The root alone never changes
 extraction, filtering, sorting, or rendering behavior.
 
 The DOCTYPE is a compatibility marker, not a schema source. OpenHi2txt uses
@@ -164,6 +166,55 @@ in document order and uses the first one whose file and checks match.
 | `file` | `.hi` by default, or another file relative to the game's data location, commonly an NVRAM file name. |
 | `output` | ID of the `output` to render. Omit it to select the unnamed output. |
 | `byte-swap` | Swaps fixed-size chunks across the entire selected input before decoding. |
+| `offset` | With `file="dif"`, absolute byte offset in the resolved logical disk. |
+| `length` | With `file="dif"`, number of logical-disk bytes supplied to the structure decoder. |
+
+### DIF-backed logical disks (OpenHi2txt 0.3.0)
+
+A writable MAME DIF overlay can be decoded by selecting `file="dif"` and a
+bounded logical-disk byte range:
+
+```xml
+<structure file="dif" offset="0x1120" length="0x424">
+  <loop count="10">
+    <elt id="NAME" type="text" size="3"/>
+    <elt id="SCORE" type="int" size="4"/>
+  </loop>
+</structure>
+```
+
+For a requested game named `example`, the input is
+`diff/example.dif`. When that file is absent, the input is not found and no
+table is decoded. The base CHD is not used by itself as a fallback.
+
+The input lookup first checks `diff/example.dif`. MAME disks do not always use
+the machine's short name, so OpenHi2txt then examines the CHD filenames directly
+inside `roms/example` and checks `diff/<chd-name>.dif`. For example, a disk named
+`golf_fore_v1.00.25.chd` is paired with `golf_fore_v1.00.25.dif`.
+
+The DIF header identifies its required parent by SHA-1. OpenHi2txt checks the
+CHD candidates inside `roms/example`, followed by `roms/example.chd`. Header
+identities are compared; the complete files are not hashed. Neither the ROM
+tree nor the DIF directory is searched recursively.
+
+The parent and overlay are exposed as one read-only logical disk. Only CHD
+hunks intersecting the requested range are decompressed, and already-read hunks
+are reused by later structures. `offset` and `length` accept decimal values or
+hexadecimal values beginning with `0x`. Both attributes are required, and
+`length` must be greater than zero.
+
+The first byte of the selected window becomes input position zero for the
+structure body. Element offsets and exact byte-signature check offsets are
+therefore relative to the window, while the structure's own `offset` remains
+relative to the complete logical disk.
+
+A `size` check on a DIF-backed structure measures the selected window, not the
+physical DIF or the complete logical disk. It is normally redundant because a
+successful read already produces exactly `length` bytes. The physical DIF size
+is not stable as additional disk blocks are written.
+
+`file="dif"`, structure `offset`, and structure `length` are rejected under the
+legacy `hi2txt` root.
 
 ### File-size checks
 

@@ -1,4 +1,5 @@
 #include "app/OutputPrinter.h"
+#include "app/InputProcessor.h"
 #include "core/Processor.h"
 #include "core/ResultRenderer.h"
 #include "io/Utils.h"
@@ -7,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -178,6 +180,47 @@ void testRootAwareValidation() {
         "<output><table><column id=\"NAME\" source-row=\"future_mode\"/></table></output>"));
     expect(!parsed.ok && parsed.error.find("expected output_index") != std::string::npos,
         "unsupported source-row modes are rejected");
+
+    const std::string difStructure =
+        "<structure file=\"dif\" offset=\"0x1120\" length=\"0x424\">"
+        "<elt id=\"VALUE\" type=\"int\" size=\"1\"/>"
+        "</structure>";
+    parsed = XmlParser::parseWithDiagnostics(legacyDefinition(difStructure));
+    expect(!parsed.ok && parsed.error.find("openhi2txt extension") != std::string::npos,
+        "legacy roots reject DIF-backed structures clearly");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(difStructure));
+    expect(parsed.ok && parsed.def.structures.size() == 1 &&
+        parsed.def.structures[0].hasInputWindow &&
+        parsed.def.structures[0].inputOffset == 0x1120 &&
+        parsed.def.structures[0].inputLength == 0x424,
+        "open roots parse 64-bit DIF logical byte windows");
+
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<structure file=\"dif\" offset=\"0\"/>"));
+    expect(!parsed.ok && parsed.error.find("requires both offset and length") != std::string::npos,
+        "DIF-backed structures require a bounded window");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<structure file=\"dif\" offset=\"0\" length=\"0\"/>"));
+    expect(!parsed.ok && parsed.error.find("positive") != std::string::npos,
+        "DIF-backed structures reject empty windows");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<structure file=\"eeprom\" offset=\"0\" length=\"1\"/>"));
+    expect(!parsed.ok && parsed.error.find("only supported with file='dif'") != std::string::npos,
+        "logical disk windows cannot change existing file inputs");
+}
+
+void testMissingDifBehavior() {
+    using namespace openhi2txt;
+
+    const GameDef def = parseDefinition(openDefinition(
+        "<structure file=\"dif\" offset=\"0\" length=\"1\">"
+        "<elt id=\"VALUE\" type=\"int\" size=\"1\"/>"
+        "</structure>"), "missing-DIF definition parses");
+    const auto result = InputProcessor::process(
+        std::filesystem::temp_directory_path() / "openhi2txt-no-such-mame-root",
+        "missinggame", def);
+    expect(!result.ok && result.errorKind == HiScoreErrorKind::InputNotFound,
+        "a missing DIF behaves like a missing hi or NVRAM input");
 }
 
 void testTerminatedLoopBehavior() {
@@ -262,6 +305,7 @@ void testPositionalSourceRowBehavior() {
 int main() {
     testRootParityAndOrdinaryRegressions();
     testRootAwareValidation();
+    testMissingDifBehavior();
     testTerminatedLoopBehavior();
     testPositionalSourceRowBehavior();
 

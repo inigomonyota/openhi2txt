@@ -31,11 +31,30 @@ static fs::path resolveInputPath(const fs::path& mameRoot,
         return mameRoot / "hiscore" / (requestedGame + ".hi");
     }
 
+    if (Utils::ieq(kind, "dif")) {
+        return mameRoot / "diff" / (requestedGame + ".dif");
+    }
+
     if (!kind.empty() && kind[0] != '.') {
         return mameRoot / "nvram" / requestedGame / kind;
     }
 
     return mameRoot / "hiscore" / (requestedGame + kind);
+}
+
+static bool hasDifInput(const fs::path& mameRoot, const std::string& requestedGame) {
+    const fs::path diffDirectory = mameRoot / "diff";
+    if (fs::is_regular_file(diffDirectory / (requestedGame + ".dif"))) return true;
+
+    const fs::path gameDirectory = mameRoot / "roms" / requestedGame;
+    std::error_code ec;
+    for (fs::directory_iterator it(gameDirectory, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || ec) continue;
+        const fs::path chd = it->path();
+        if (!Utils::ieq(chd.extension().string(), ".chd")) continue;
+        if (fs::is_regular_file(diffDirectory / (chd.stem().string() + ".dif"))) return true;
+    }
+    return false;
 }
 
 static std::string toLowerAscii(std::string s) {
@@ -523,6 +542,8 @@ bool Context::hasInputForGame(const std::string& gameName) const {
     if (!defRes.ok) return false;
 
     for (const auto& s : defRes.def.structures) {
+        if (Utils::ieq(Utils::trim(s.fileKind), "dif") &&
+            hasDifInput(fs::path(options_.mameRoot), gameName)) return true;
         if (fs::exists(resolveInputPath(fs::path(options_.mameRoot), gameName, s))) return true;
     }
 

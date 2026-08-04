@@ -210,6 +210,9 @@ struct CheckDef {
 
 struct Structure {
     std::string fileKind = ".hi";
+    uint64_t inputOffset = 0;
+    uint64_t inputLength = 0;
+    bool hasInputWindow = false;
     int byteSwap = 0;
     std::vector<int> checkSizes;
 
