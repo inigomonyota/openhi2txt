@@ -391,6 +391,12 @@ static Value applyOneValue(const std::unordered_map<std::string, FormatDef>& for
                     x <<= (unsigned)sh;
                     num = (double)(int64_t)x;
                 } break;
+                case FormatKind::BitCount: {
+                    uint64_t x = (uint64_t)(int64_t)std::llround(num);
+                    int count = 0;
+                    while (x) { count += (int)(x & 1U); x >>= 1U; }
+                    num = (double)count;
+                } break;
                 case FormatKind::Round:
                     num = (double)std::llround(num);
                     break;

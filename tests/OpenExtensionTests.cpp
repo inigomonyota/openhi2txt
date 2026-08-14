@@ -161,6 +161,21 @@ void testRootAwareValidation() {
         SourceRowKind::OutputIndex,
         "open root accepts and parses output_index source rows");
 
+    const std::string hiddenHeaderBody =
+        "<output><table><column id=\"RANK\" src=\"index\" header=\"false\"/>"
+        "<column id=\"SCORE\"/></table></output>";
+    parsed = XmlParser::parseWithDiagnostics(legacyDefinition(hiddenHeaderBody));
+    expect(!parsed.ok && parsed.error.find("openhi2txt extension") != std::string::npos,
+        "legacy root rejects column header visibility clearly");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(hiddenHeaderBody));
+    expect(parsed.ok && !parsed.def.outputs.at("").tables[0].cols[0].headerVisible,
+        "open root accepts hidden column headers");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<output><table><column id=\"SCORE\" header=\"sometimes\"/>"
+        "</table></output>"));
+    expect(!parsed.ok && parsed.error.find("expected true or false") != std::string::npos,
+        "column header visibility rejects ambiguous values");
+
     parsed = XmlParser::parseWithDiagnostics(openDefinition(
         "<structure><loop stop-when=\"SCORE:0\"><elt id=\"SCORE\" type=\"int\" size=\"1\"/>"
         "</loop></structure>"));
@@ -207,6 +222,26 @@ void testRootAwareValidation() {
         "<structure file=\"eeprom\" offset=\"0\" length=\"1\"/>"));
     expect(!parsed.ok && parsed.error.find("only supported with file='dif'") != std::string::npos,
         "logical disk windows cannot change existing file inputs");
+
+    const std::string rankedPoints =
+        "<output><table><ranked-points><qualifier src=\"NAME\" points=\"5\"/>"
+        "</ranked-points><column id=\"NAME\"/><column id=\"POINTS\"/></table></output>";
+    parsed = XmlParser::parseWithDiagnostics(legacyDefinition(rankedPoints));
+    expect(!parsed.ok && parsed.error.find("openhi2txt extension") != std::string::npos,
+        "legacy roots reject ranked-points tables clearly");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(rankedPoints));
+    expect(parsed.ok && parsed.def.outputs.at("").tables[0].rankedPoints.enabled &&
+        parsed.def.outputs.at("").tables[0].rankedPoints.sources.size() == 1,
+        "open roots parse ranked-points qualifier sources");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<output><table><ranked-points/></table></output>"));
+    expect(!parsed.ok && parsed.error.find("at least one qualifier") != std::string::npos,
+        "ranked-points tables require qualifier sources");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<output><table><ranked-points><qualifier src=\"NAME\" points=\"0\"/>"
+        "</ranked-points></table></output>"));
+    expect(!parsed.ok && parsed.error.find("positive integer") != std::string::npos,
+        "ranked-points qualifiers require positive point ceilings");
 }
 
 void testMissingDifBehavior() {
@@ -300,6 +335,180 @@ void testPositionalSourceRowBehavior() {
         "the second output row reads its label from original logical row one");
 }
 
+void testRankedPointsBehavior() {
+    using namespace openhi2txt;
+
+    const std::string body =
+        "<output><table id=\"LEGENDS\" sort=\"POINTS\" sort-order=\"desc\" lines-max=\"5\">"
+        "<ranked-points name-column=\"NAME\" points-column=\"POINTS\">"
+        "<qualifier src=\"SPEED NAME\" points=\"3\"/>"
+        "<qualifier src=\"FATALS NAME\" points=\"3\"/>"
+        "<qualifier src=\"STREAK NAME\" points=\"3\"/>"
+        "<qualifier src=\"HITS NAME\" points=\"2\"/>"
+        "<qualifier src=\"DAMAGE NAME\" points=\"2\"/>"
+        "</ranked-points>"
+        "<column id=\"RANK\" src=\"index\" format=\"+1\"/>"
+        "<column id=\"NAME\"/><column id=\"POINTS\"/>"
+        "</table></output>";
+    const GameDef def = parseDefinition(openDefinition(body), "ranked-points definition parses");
+
+    std::vector<std::unordered_map<std::string, Value>> rows(3);
+    rows[0]["SPEED NAME"] = std::string("MB ");
+    rows[0]["FATALS NAME"] = std::string("MB");
+    rows[0]["STREAK NAME"] = std::string("ROB");
+    rows[0]["HITS NAME"] = std::string("KEV");
+    rows[0]["DAMAGE NAME"] = std::string("KEV");
+    rows[1]["SPEED NAME"] = std::string("MB");
+    rows[1]["FATALS NAME"] = std::string("ZED");
+    rows[1]["STREAK NAME"] = std::string("ROB");
+    rows[1]["HITS NAME"] = std::string("KEV");
+    rows[1]["DAMAGE NAME"] = std::string("SAM");
+    rows[2]["SPEED NAME"] = std::string("ACE");
+    rows[2]["FATALS NAME"] = std::string("MB");
+    rows[2]["STREAK NAME"] = std::string("CEM");
+
+    const auto result = ResultRenderer::render(def, rows, "", ReadOptions{});
+    expect(result.tables.size() == 1 && result.tables[0].rows.size() == 5,
+        "ranked-points output is sorted and limited like an ordinary table");
+    expect(result.tables[0].rows[0] == std::vector<std::string>({ "1", "MB", "6" }),
+        "a name earns points from independent qualifier tables");
+    expect(result.tables[0].rows[1] == std::vector<std::string>({ "2", "KEV", "4" }),
+        "independent character qualifiers accumulate");
+    expect(result.tables[0].rows[2] == std::vector<std::string>({ "3", "ROB", "3" }),
+        "repeat appearances in one qualifier count only at the best rank");
+    expect(result.tables[0].rows[3] == std::vector<std::string>({ "4", "ZED", "2" }),
+        "lower qualifier ranks receive one fewer point");
+    expect(result.tables[0].rows[4] == std::vector<std::string>({ "5", "ACE", "1" }),
+        "equal totals retain first-seen qualifier order");
+}
+
+void testColumnHeaderVisibility() {
+    using namespace openhi2txt;
+
+    const GameDef partial = parseDefinition(openDefinition(
+        "<output><table id=\"SCORES\">"
+        "<column id=\"RANK\" src=\"index\" format=\"+1\" header=\"false\"/>"
+        "<column id=\"NAME\"/><column id=\"SCORE\"/>"
+        "</table></output>"), "partially hidden header definition parses");
+    std::vector<std::unordered_map<std::string, Value>> rows(1);
+    rows[0]["NAME"] = std::string("XYZ");
+    rows[0]["SCORE"] = int64_t{ 20202 };
+
+    auto result = ResultRenderer::render(partial, rows, "", ReadOptions{});
+    expect(result.tables.size() == 1 &&
+        result.tables[0].columns == std::vector<std::string>({ "", "NAME", "SCORE" }),
+        "a hidden heading retains its positional column slot");
+    expect(printed(result, OutputFormat::Text) ==
+        "# SCORES\n|NAME|SCORE\n1|XYZ|20202\n\n",
+        "text output blanks an individually hidden heading but keeps its data");
+    expect(printed(result, OutputFormat::Xml).find(
+        "<col></col><col>NAME</col><col>SCORE</col>") != std::string::npos,
+        "XML output preserves positional placeholders for individually hidden headings");
+
+    const GameDef allHidden = parseDefinition(openDefinition(
+        "<output><table id=\"SCORES\">"
+        "<column id=\"RANK\" src=\"index\" format=\"+1\" header=\"false\"/>"
+        "<column id=\"NAME\" header=\"false\"/>"
+        "<column id=\"SCORE\" header=\"false\"/>"
+        "</table></output>"), "fully hidden header definition parses");
+    result = ResultRenderer::render(allHidden, rows, "", ReadOptions{});
+    expect(printed(result, OutputFormat::Text) ==
+        "# SCORES\n1|XYZ|20202\n\n",
+        "text output omits the header line when every heading is hidden");
+    expect(printed(result, OutputFormat::Xml).find("<col>") == std::string::npos,
+        "XML output omits the header block when every heading is hidden");
+}
+
+void testMidwaySortBehavior() {
+    using namespace openhi2txt;
+
+    const std::string body =
+        "<output sort-method=\"midway\">"
+        "<table display=\"sort\" sort=\"SEED\" sort-order=\"desc\" "
+        "line-ignore=\"ELIGIBLE:1\" line-ignore-operator=\"&lt;\">"
+        "<column id=\"NAME\"/></table>"
+        "<table id=\"RESULT\" sort=\"SCORE\" sort-order=\"desc\" "
+        "line-ignore=\"ELIGIBLE:1\" line-ignore-operator=\"&lt;\">"
+        "<sort src=\"TIE\" order=\"desc\"/>"
+        "<column id=\"NAME\"/><column id=\"SCORE\"/>"
+        "</table></output>";
+
+    auto parsed = XmlParser::parseWithDiagnostics(legacyDefinition(body));
+    expect(!parsed.ok && parsed.error.find("openhi2txt root") != std::string::npos,
+        "legacy roots reject Midway sorting extensions clearly");
+    const GameDef def = parseDefinition(openDefinition(body),
+        "Midway sorting definition parses");
+    expect(Utils::ieq(def.outputs.at("").sortMethod, "midway") &&
+        def.outputs.at("").tables[1].sortKeys.size() == 2,
+        "Midway output mode and secondary sort keys are retained");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<output sort-method=\"stable-ish\"><table><column id=\"X\"/>"
+        "</table></output>"));
+    expect(!parsed.ok && parsed.error.find("expected midway") != std::string::npos,
+        "unknown output sort methods are rejected clearly");
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<output><table><sort order=\"desc\"/><column id=\"X\"/>"
+        "</table></output>"));
+    expect(!parsed.ok && parsed.error.find("non-empty src") != std::string::npos,
+        "secondary sort keys require an explicit source");
+
+    const int seeds[]  = { 2, 1, 2, 1, 2, 1, 2, 1, 2, 1 };
+    const int scores[] = { 1, 1, 2, 2, 1, 1, 2, 2, 1, 1 };
+    std::vector<std::unordered_map<std::string, Value>> rows(10);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        rows[i]["NAME"] = std::string(1, static_cast<char>('A' + i));
+        rows[i]["SEED"] = static_cast<int64_t>(seeds[i]);
+        rows[i]["SCORE"] = static_cast<int64_t>(scores[i]);
+        rows[i]["TIE"] = int64_t{ 0 };
+        rows[i]["ELIGIBLE"] = int64_t{ 1 };
+    }
+    for (size_t i = 0; i < 32; ++i) {
+        std::unordered_map<std::string, Value> empty;
+        empty["NAME"] = std::string("EMPTY") + std::to_string(i);
+        empty["SEED"] = empty["SCORE"] = empty["TIE"] = empty["ELIGIBLE"] = int64_t{ 0 };
+        rows.push_back(std::move(empty));
+    }
+
+    const auto result = ResultRenderer::render(def, rows, "", ReadOptions{});
+    expect(result.tables.size() == 1 && result.tables[0].id == "RESULT",
+        "a display=sort table changes state without being emitted");
+    const std::vector<std::string> expected{ "D", "C", "H", "G", "E", "I", "B", "A", "F", "J" };
+    bool exactOrder = result.tables[0].rows.size() == expected.size();
+    for (size_t i = 0; exactOrder && i < expected.size(); ++i)
+        exactOrder = result.tables[0].rows[i][0] == expected[i];
+    expect(exactOrder,
+        "Midway sorting reproduces DJGPP/BSD tie permutations and chained row order");
+    expect(result.tables[0].rows.size() == 10,
+        "Midway eligibility rules participate in sorting and suppress ineligible profiles");
+
+    const GameDef bitCount = parseDefinition(openDefinition(
+        "<output><table><column id=\"MASK\" format=\"BITS\"/></table></output>"
+        "<format id=\"BITS\"><bit-count/></format>"),
+        "bit-count definition parses");
+    std::vector<std::unordered_map<std::string, Value>> masks(1);
+    masks[0]["MASK"] = int64_t{ 0xB5 };
+    const auto bitResult = ResultRenderer::render(bitCount, masks, "", ReadOptions{});
+    expect(bitResult.tables[0].rows[0][0] == "5",
+        "bit-count counts set bits for Midway team masks");
+
+    const GameDef emptyTable = parseDefinition(openDefinition(
+        "<output><table id=\"CHAMPIONS\" show-empty=\"true\" "
+        "line-ignore=\"MASK:30\" line-ignore-operator=\"&lt;\">"
+        "<column id=\"NAME\"/><column id=\"MASK\"/>"
+        "</table></output>"), "show-empty definition parses");
+    std::vector<std::unordered_map<std::string, Value>> nonChampions(1);
+    nonChampions[0]["NAME"] = std::string("ALMOST");
+    nonChampions[0]["MASK"] = int64_t{ 29 };
+    const auto emptyResult = ResultRenderer::render(emptyTable, nonChampions, "", ReadOptions{});
+    expect(emptyResult.tables.size() == 1 && emptyResult.tables[0].id == "CHAMPIONS" &&
+        emptyResult.tables[0].rows.empty(),
+        "show-empty emits a table whose filters remove every row");
+    parsed = XmlParser::parseWithDiagnostics(legacyDefinition(
+        "<output><table show-empty=\"true\"><column id=\"X\"/></table></output>"));
+    expect(!parsed.ok && parsed.error.find("openhi2txt extension") != std::string::npos,
+        "legacy roots reject show-empty clearly");
+}
+
 } // namespace
 
 int main() {
@@ -308,6 +517,9 @@ int main() {
     testMissingDifBehavior();
     testTerminatedLoopBehavior();
     testPositionalSourceRowBehavior();
+    testRankedPointsBehavior();
+    testColumnHeaderVisibility();
+    testMidwaySortBehavior();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed.\n";

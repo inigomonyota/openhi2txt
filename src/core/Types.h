@@ -18,6 +18,7 @@ enum class FormatKind {
     DivideTrunc,   // int division
     DivideRound,   // rounded int division
     Shift,         // logical left shift
+    BitCount,      // number of set bits
     Round,
     Trunc,
     LoopIndex
@@ -232,13 +233,33 @@ enum class SourceRowKind {
 struct Column {
     std::string id, src, format, display;
     SourceRowKind sourceRow = SourceRowKind::Current;
+    bool headerVisible = true;
 };
 struct IgnoreRule { std::string colId; std::string value; };
 enum class IgnoreOp { And, Or };
 
+struct RankedPointsSource {
+    std::string src;
+    int maxPoints = 0;
+};
+
+struct RankedPointsDef {
+    bool enabled = false;
+    std::string nameColumn = "NAME";
+    std::string pointsColumn = "POINTS";
+    std::vector<RankedPointsSource> sources;
+};
+
+struct SortKeyDef {
+    std::string src;
+    std::string order;
+    std::string format;
+};
+
 struct Table {
     std::string id;
     std::string display; // always|extra|debug
+    bool showEmpty = false;
     std::string lineIgnoreRaw;
     std::vector<IgnoreRule> ignoreRules;
     IgnoreOp ignoreOp = IgnoreOp::And;
@@ -247,8 +268,11 @@ struct Table {
     std::string sortKey;
     std::string sortOrder;
     std::string sortFormat;
+    std::vector<SortKeyDef> sortKeys;
 
     int linesMax = 0;
+
+    RankedPointsDef rankedPoints;
 
     std::vector<Column> cols;
 };
@@ -273,6 +297,7 @@ struct OutputItemRef {
 
 struct OutputDef {
     std::string id;            // "" = default
+    std::string sortMethod;    // empty/default or midway (openhi2txt extension)
     std::vector<Table> tables; // tables inside that <output>
     std::vector<Column> fields;
     std::vector<OutputItemRef> items;

@@ -278,6 +278,11 @@ field.source;
 field.display;
 ```
 
+Definitions using the OpenHi2txt `column@header="false"` extension retain the
+column values but place an empty string in the corresponding
+`table.columns` position. The matching `table.columnInfo` entry still exposes
+the column ID and source.
+
 Display levels:
 
 ```cpp

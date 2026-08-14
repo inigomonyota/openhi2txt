@@ -43,7 +43,10 @@ Version 0.2.0 adds two opt-in definition extensions: terminated loops with
 `loop@stop-when` and positional output lookup with
 `column@source-row="output_index"`. Neither changes behavior when omitted.
 Version 0.3.0 adds bounded logical-disk input from a MAME DIF overlay with
-`structure@file="dif"`, `structure@offset`, and `structure@length`.
+`structure@file="dif"`, `structure@offset`, and `structure@length`. It also
+adds ranked-points table aggregation for games whose summary leaderboard is
+derived from positions in several underlying tables, and per-column header
+visibility with `column@header="false"`.
 
 ## Use It As A Library
 

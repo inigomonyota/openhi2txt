@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -400,12 +401,13 @@ static int compareValueForSort(const Value& va, const Value& vb) {
 
 static Value sortKeyValue(const std::unordered_map<std::string, Value>& row,
     const Table& tab,
+    const SortKeyDef& key,
     const std::unordered_map<std::string, FormatDef>& formats) {
-    if (Utils::ieq(tab.sortKey, "index")) return (int64_t)0;
+    if (Utils::ieq(key.src, "index")) return (int64_t)0;
 
     const Column* sortCol = nullptr;
     for (const auto& col : tab.cols) {
-        if (Utils::ieq(col.id, tab.sortKey)) {
+        if (Utils::ieq(col.id, key.src)) {
             sortCol = &col;
             break;
         }
@@ -435,12 +437,12 @@ static Value sortKeyValue(const std::unordered_map<std::string, Value>& row,
     }
 
     if (!fromColumnAlias) {
-        auto value = Utils::findIdentifier(row, tab.sortKey);
+        auto value = Utils::findIdentifier(row, key.src);
         if (value != row.end()) v = value->second;
     }
 
-    if (!tab.sortFormat.empty()) {
-        v = Formatter::apply(formats, tab.sortFormat,
+    if (!key.format.empty()) {
+        v = Formatter::apply(formats, key.format,
             const_cast<std::unordered_map<std::string, Value>&>(row),
             v);
     }
@@ -448,20 +450,146 @@ static Value sortKeyValue(const std::unordered_map<std::string, Value>& row,
     return v;
 }
 
+static Value sortKeyValue(const std::unordered_map<std::string, Value>& row,
+    const Table& tab,
+    const std::unordered_map<std::string, FormatDef>& formats) {
+    const SortKeyDef key{ tab.sortKey, tab.sortOrder, tab.sortFormat };
+    return sortKeyValue(row, tab, key, formats);
+}
+
+static int compareRowsThreeWay(const std::unordered_map<std::string, Value>& a,
+    const std::unordered_map<std::string, Value>& b,
+    const Table& tab,
+    const std::unordered_map<std::string, FormatDef>& formats) {
+    const std::vector<SortKeyDef> fallback{ { tab.sortKey, tab.sortOrder, tab.sortFormat } };
+    const auto& keys = tab.sortKeys.empty() ? fallback : tab.sortKeys;
+    for (const auto& key : keys) {
+        const int cmp = compareValueForSort(
+            sortKeyValue(a, tab, key, formats), sortKeyValue(b, tab, key, formats));
+        if (cmp) return Utils::ieq(key.order, "desc") ? -cmp : cmp;
+    }
+    return 0;
+}
+
 static bool compareRows(const std::unordered_map<std::string, Value>& a,
     const std::unordered_map<std::string, Value>& b,
     const Table& tab,
     const std::unordered_map<std::string, FormatDef>& formats) {
-    const bool asc = !Utils::ieq(tab.sortOrder, "desc");
-    Value ka = sortKeyValue(a, tab, formats);
-    Value kb = sortKeyValue(b, tab, formats);
+    return compareRowsThreeWay(a, b, tab, formats) < 0;
+}
 
-    const int cmp = compareValueForSort(ka, kb);
-    return asc ? (cmp < 0) : (cmp > 0);
+template <typename Row, typename Compare>
+static void djgppQsort(std::vector<Row>& values, Compare compare) {
+    constexpr ptrdiff_t threshold = 4;
+    constexpr ptrdiff_t medianThreshold = 6;
+    auto swap = [&](ptrdiff_t a, ptrdiff_t b) { std::swap(values[(size_t)a], values[(size_t)b]); };
+    std::function<void(ptrdiff_t, ptrdiff_t)> quicksort = [&](ptrdiff_t base, ptrdiff_t max) {
+        ptrdiff_t length = max - base;
+        do {
+            ptrdiff_t middle = base + (length >> 1);
+            if (length >= medianThreshold) {
+                const ptrdiff_t first = base;
+                ptrdiff_t pivot = compare(values[(size_t)first], values[(size_t)middle]) > 0 ? first : middle;
+                const ptrdiff_t last = max - 1;
+                if (compare(values[(size_t)pivot], values[(size_t)last]) > 0) {
+                    pivot = pivot == first ? middle : first;
+                    if (compare(values[(size_t)pivot], values[(size_t)last]) < 0) pivot = last;
+                }
+                if (pivot != middle) swap(pivot, middle);
+            }
+
+            ptrdiff_t left = base, right = max - 1;
+            for (;;) {
+                while (left < middle && compare(values[(size_t)left], values[(size_t)middle]) <= 0) ++left;
+                while (right > middle) {
+                    if (compare(values[(size_t)middle], values[(size_t)right]) <= 0) { --right; continue; }
+                    ptrdiff_t next = left + 1, other;
+                    if (left == middle) middle = other = right;
+                    else { other = right; --right; }
+                    swap(left, other); left = next;
+                    goto partition_continue;
+                }
+                if (left == middle) break;
+                else {
+                    const ptrdiff_t other = middle;
+                    middle = left;
+                    --right;
+                    swap(left, other);
+                }
+                partition_continue:;
+            }
+
+            const ptrdiff_t after = middle + 1;
+            const ptrdiff_t lowLength = middle - base;
+            const ptrdiff_t highLength = max - after;
+            if (lowLength <= highLength) {
+                if (lowLength >= threshold) quicksort(base, middle);
+                base = after; length = highLength;
+            }
+            else {
+                if (highLength >= threshold) quicksort(after, max);
+                max = middle; length = lowLength;
+            }
+        } while (length >= threshold);
+    };
+
+    const ptrdiff_t count = (ptrdiff_t)values.size();
+    if (count <= 1) return;
+    ptrdiff_t high;
+    if (count >= threshold) { quicksort(0, count); high = threshold; }
+    else high = count;
+    ptrdiff_t minimum = 0;
+    for (ptrdiff_t i = 1; i < high; ++i)
+        if (compare(values[(size_t)minimum], values[(size_t)i]) > 0) minimum = i;
+    if (minimum) swap(0, minimum);
+    for (ptrdiff_t i = 1; i < count; ++i) {
+        ptrdiff_t destination = i;
+        while (compare(values[(size_t)(destination - 1)], values[(size_t)i]) > 0) --destination;
+        if (destination != i) {
+            Row value = std::move(values[(size_t)i]);
+            for (ptrdiff_t j = i; j > destination; --j)
+                values[(size_t)j] = std::move(values[(size_t)(j - 1)]);
+            values[(size_t)destination] = std::move(value);
+        }
+    }
 }
 
 static bool reverseEqualSortGroups(const Table& tab) {
     return tab.sortKey.find('_') == std::string::npos;
+}
+
+static std::vector<std::unordered_map<std::string, Value>> buildRankedPointsRows(
+    const Table& tab,
+    const std::vector<std::unordered_map<std::string, Value>>& sourceRows) {
+    std::unordered_map<std::string, int64_t> totals;
+    std::unordered_set<std::string> knownNames;
+    std::vector<std::string> nameOrder;
+
+    for (const auto& qualifier : tab.rankedPoints.sources) {
+        std::unordered_set<std::string> creditedByQualifier;
+        const size_t count = std::min(sourceRows.size(),
+            static_cast<size_t>(qualifier.maxPoints));
+        for (size_t rank = 0; rank < count; ++rank) {
+            const auto value = Utils::findIdentifier(sourceRows[rank], qualifier.src);
+            if (value == sourceRows[rank].end()) continue;
+
+            const std::string name = Utils::trim(Utils::valueToString(value->second));
+            if (name.empty() || !creditedByQualifier.insert(name).second) continue;
+
+            if (knownNames.insert(name).second) nameOrder.push_back(name);
+            totals[name] += qualifier.maxPoints - static_cast<int64_t>(rank);
+        }
+    }
+
+    std::vector<std::unordered_map<std::string, Value>> generated;
+    generated.reserve(nameOrder.size());
+    for (const auto& name : nameOrder) {
+        std::unordered_map<std::string, Value> row;
+        row[tab.rankedPoints.nameColumn] = name;
+        row[tab.rankedPoints.pointsColumn] = totals[name];
+        generated.push_back(std::move(row));
+    }
+    return generated;
 }
 
 static const OutputDef* selectOutput(const GameDef& def, const std::string& outputId) {
@@ -581,13 +709,24 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
     const size_t missingIndex = (size_t)-1;
     std::vector<size_t> renderedTableIndices(out->tables.size(), missingIndex);
     std::vector<size_t> renderedFieldIndices(out->fields.size(), missingIndex);
+    std::vector<std::unordered_map<std::string, Value>> midwayRows;
+    if (Utils::ieq(out->sortMethod, "midway")) {
+        midwayRows.reserve(rows.size());
+        for (size_t i = 0; i < rows.size(); ++i) {
+            auto row = rows[i];
+            row[kUnsortedIndexKey] = (int64_t)i;
+            midwayRows.push_back(std::move(row));
+        }
+    }
 
     for (size_t tableDefinitionIndex = 0;
          tableDefinitionIndex < out->tables.size();
          ++tableDefinitionIndex) {
         const auto& tab = out->tables[tableDefinitionIndex];
         if (options.keepFirstTable && emittedTable) break;
-        if (!displayAllowed(tab.display, options)) continue;
+        const bool hiddenMidwaySort = Utils::ieq(out->sortMethod, "midway") &&
+            Utils::ieq(tab.display, "sort");
+        if (!hiddenMidwaySort && !displayAllowed(tab.display, options)) continue;
 
         bool anyCols = false;
         for (const auto& col : tab.cols) {
@@ -599,18 +738,28 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
         if (!anyCols) continue;
 
         std::vector<std::unordered_map<std::string, Value>> filtered;
-        filtered.reserve(rows.size());
-        for (size_t i = 0; i < rows.size(); ++i) {
-            const auto& r = rows[i];
-            if (!rowRelevantToTable(def, tab, r, options)) continue;
-            auto rowCopy = r;
-            rowCopy[kUnsortedIndexKey] = (int64_t)i;
-            filtered.push_back(std::move(rowCopy));
+        if (tab.rankedPoints.enabled) {
+            filtered = buildRankedPointsRows(tab, rows);
+            for (size_t i = 0; i < filtered.size(); ++i)
+                filtered[i][kUnsortedIndexKey] = static_cast<int64_t>(i);
+        }
+        else if (!midwayRows.empty()) {
+            filtered = midwayRows;
+        }
+        else {
+            filtered.reserve(rows.size());
+            for (size_t i = 0; i < rows.size(); ++i) {
+                const auto& r = rows[i];
+                if (!rowRelevantToTable(def, tab, r, options)) continue;
+                auto rowCopy = r;
+                rowCopy[kUnsortedIndexKey] = (int64_t)i;
+                filtered.push_back(std::move(rowCopy));
+            }
         }
 
         // Explicit field operands may refer to an element outside a loop.
         // Make only those referenced fields available on every table row.
-        if (!rows.empty()) {
+        if (!tab.rankedPoints.enabled && !rows.empty()) {
             std::unordered_set<std::string> globalOperandIds;
             for (const auto& formatEntry : def.formats) {
                 for (const auto& op : formatEntry.second.mathOps) {
@@ -630,11 +779,26 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             }
         }
 
-        if (!tab.sortKey.empty()) {
-            std::stable_sort(filtered.begin(), filtered.end(),
-                [&](const auto& a, const auto& b) { return compareRows(a, b, tab, def.formats); });
+        if (!tab.sortKey.empty() || !tab.sortKeys.empty()) {
+            if (Utils::ieq(out->sortMethod, "midway")) {
+                djgppQsort(filtered, [&](const auto& a, const auto& b) {
+                    const bool aEligible = rowRelevantToTable(def, tab, a, options) &&
+                        !rowShouldIgnore(tab, a, def.formats, 0);
+                    const bool bEligible = rowRelevantToTable(def, tab, b, options) &&
+                        !rowShouldIgnore(tab, b, def.formats, 0);
+                    if (aEligible != bEligible) return aEligible ? -1 : 1;
+                    if (!aEligible) return 0;
+                    return compareRowsThreeWay(a, b, tab, def.formats);
+                });
+                midwayRows = filtered;
+            }
+            else {
+                std::stable_sort(filtered.begin(), filtered.end(),
+                    [&](const auto& a, const auto& b) { return compareRows(a, b, tab, def.formats); });
+            }
 
-            if (Utils::ieq(tab.sortOrder, "desc") && reverseEqualSortGroups(tab)) {
+            if (!Utils::ieq(out->sortMethod, "midway") && !tab.rankedPoints.enabled &&
+                Utils::ieq(tab.sortOrder, "desc") && reverseEqualSortGroups(tab)) {
                 auto sortKey = [&](const std::unordered_map<std::string, Value>& r) -> Value {
                     return sortKeyValue(r, tab, def.formats);
                 };
@@ -656,6 +820,18 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
                 }
             }
         }
+
+        // Midway's leaderboard code sorts the complete profile array, including
+        // unused and ineligible records.  Eligibility is applied only while the
+        // sorted page is displayed, and the complete order feeds the next page.
+        if (Utils::ieq(out->sortMethod, "midway") && !hiddenMidwaySort) {
+            filtered.erase(std::remove_if(filtered.begin(), filtered.end(),
+                [&](const auto& row) {
+                    return !rowRelevantToTable(def, tab, row, options);
+                }), filtered.end());
+        }
+
+        if (hiddenMidwaySort) continue;
 
         // A single-column <sum> is used by the official definitions for
         // whole-table totals (for example KOF 2001 win percentages).
@@ -688,7 +864,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             filtered = std::move(kept);
         }
 
-        if (filtered.empty()) continue;
+        if (filtered.empty() && !tab.showEmpty) continue;
 
         HiScoreTable renderedTable;
         renderedTable.id = tab.id;
@@ -700,7 +876,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             if (!optionAllowsColumn(col, options)) continue;
             if (options.maxColumns > 0 && (int)selectedColumns.size() >= options.maxColumns) break;
             selectedColumns.push_back(&col);
-            renderedTable.columns.push_back(col.id);
+            renderedTable.columns.push_back(col.headerVisible ? col.id : std::string());
             if (trace) trace->line("TRACE: output table field: " + col.id);
             const std::string src = Utils::trim(col.src).empty() ? col.id : col.src;
             renderedTable.columnInfo.push_back(HiScoreColumn{ col.id, src, displayLevelOf(col.display) });
@@ -739,7 +915,7 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             if (effectiveMaxLines > 0 && (int)renderedTable.rows.size() >= effectiveMaxLines) break;
         }
 
-        if (!renderedTable.rows.empty()) {
+        if (!renderedTable.rows.empty() || tab.showEmpty) {
             renderedTableIndices[tableDefinitionIndex] = result.tables.size();
             result.tables.push_back(std::move(renderedTable));
             emittedTable = true;

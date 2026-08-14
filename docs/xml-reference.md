@@ -123,6 +123,8 @@ under the legacy `hi2txt` root.
 | 0.2.0 | Terminated loops | `loop@stop-when="ID:value"` | [Terminated loops](#terminated-loops-openhi2txt-020) |
 | 0.2.0 | Positional source rows | `column@source-row="output_index"` | [Positional source rows](#positional-source-rows-openhi2txt-020) |
 | 0.3.0 | Bounded DIF/CHD input | `structure@file="dif"` with `offset` and `length` | [DIF-backed logical disks](#dif-backed-logical-disks-openhi2txt-030) |
+| 0.3.0 | Ranked-points aggregation | `table/ranked-points/qualifier` | [Ranked-points aggregation](#ranked-points-aggregation-openhi2txt-030) |
+| 0.3.0 | Column-header visibility | `column@header="false"` | [Column-header visibility](#column-header-visibility-openhi2txt-030) |
 
 All other grammar in this reference is shared with the legacy root unless its
 section explicitly identifies it as an OpenHi2txt extension. Merely changing
@@ -619,6 +621,54 @@ Table attributes:
 | `line-ignore` | One or more `COLUMN:VALUE` rules, separated by commas or semicolons. |
 | `line-ignore-operator` | `and` (default), `or`, or a comparison operator used by the rules. |
 | `display` | `always`, `extra`, or `debug`. |
+| `show-empty` | Emit the table and its headings even when no rows survive filtering (OpenHi2txt extension). |
+
+Additional sort keys may follow the primary table attributes. They are applied
+in declaration order when the preceding key compares equal:
+
+```xml
+<table sort="SCORE" sort-order="desc">
+  <sort src="WINS" order="desc"/>
+  <sort src="STREAK" order="desc"/>
+  ...
+</table>
+```
+
+Each `sort` child requires `src` and accepts `order` (`asc` or `desc`) and
+`format`. This is an OpenHi2txt extension and is rejected under the legacy
+`hi2txt` root.
+
+### Midway sorting (OpenHi2txt 0.3.0)
+
+Some 1990s Midway games repeatedly sort the same player-profile array with the
+DJGPP/BSD `qsort` implementation. Equal records are not stable, so each page's
+order influences ties on later pages. Use `sort-method="midway"` on `output` to
+reproduce that behavior:
+
+```xml
+<output sort-method="midway">
+  <table display="sort" sort="TEAMS" sort-format="TEAM COUNT"
+         sort-order="desc">
+    <sort src="WINS" order="desc"/>
+    <column id="NAME"/>
+  </table>
+  <table id="GREATEST PLAYERS" sort="WINS" sort-order="desc">
+    <sort src="GAMES" order="desc"/>
+    <column id="NAME"/>
+    <column id="WINS"/>
+  </table>
+</output>
+```
+
+Every table sorts the complete row array produced by the preceding table.
+Filtering is evaluated by the comparator, so ignored rows remain in the shared
+array but sort after eligible rows. A table with `display="sort"` performs its
+sort without being emitted; this models an in-game page that affects later tie
+ordering but is not wanted in the text output.
+
+`sort-method="midway"`, child `sort` elements, and `display="sort"` are
+OpenHi2txt extensions. Use them only when reproducing a verified Midway/DJGPP
+sort chain; ordinary outputs retain their existing stable sorting behavior.
 
 For example, omit empty factory rows:
 
@@ -633,6 +683,35 @@ For example, omit empty factory rows:
 The default and `always` are shown by `-r`.
 
 Fields and columns accept the same `display` values.
+
+Set `show-empty="true"` when an empty table is meaningful and should remain
+visible in text, XML, or library output. The default is `false`, preserving the
+legacy behavior of omitting tables with no rows. `show-empty` is rejected under
+the legacy `hi2txt` root.
+
+### Column-header visibility (OpenHi2txt 0.3.0)
+
+Set `header="false"` to hide a column's heading without removing the column or
+its values:
+
+```xml
+<table id="SCORES">
+  <column id="RANK" src="index" format="+1" header="false"/>
+  <column id="NAME"/>
+  <column id="SCORE"/>
+</table>
+```
+
+The text heading for this example is `|NAME|SCORE`; the empty first cell keeps
+the headings aligned with the data. If every column has `header="false"`, the
+entire heading line is omitted. XML output likewise retains empty positional
+`col` elements when some headings remain and omits the `col` block when all
+headings are hidden.
+
+In library results, hidden headings are empty strings in
+`HiScoreTable::columns`; the corresponding `HiScoreColumn` in `columnInfo`
+continues to expose the definition ID and source. The default is `true`.
+`header` is rejected under the legacy root.
 
 ### Positional source rows (OpenHi2txt 0.2.0)
 
@@ -660,6 +739,40 @@ score-only candidate rows to participate in sorting even when they have no
 
 `source-row` is rejected under the legacy root. Omitting it preserves the
 ordinary current-row lookup exactly.
+
+### Ranked-points aggregation (OpenHi2txt 0.3.0)
+
+Some games build a summary leaderboard by awarding points for positions in
+several underlying qualifier tables. A `ranked-points` child generates those
+summary rows before the table's ordinary filtering, sorting, and limiting:
+
+```xml
+<table id="LEGENDS" sort="POINTS" sort-order="desc" lines-max="10">
+  <ranked-points name-column="NAME" points-column="POINTS">
+    <qualifier src="STREAK NAME" points="10"/>
+    <qualifier src="SPEED NAME" points="10"/>
+    <qualifier src="JAGO HITS NAME" points="5"/>
+    <qualifier src="JAGO DAMAGE NAME" points="5"/>
+  </ranked-points>
+  <column id="RANK" src="index" format="+1"/>
+  <column id="NAME"/>
+  <column id="POINTS"/>
+</table>
+```
+
+For a qualifier whose `points` value is `N`, source row zero awards `N`
+points, row one awards `N - 1`, and so on through row `N - 1`. A name appearing
+more than once in one qualifier receives only its best award from that
+qualifier, but awards from different qualifiers are added together. Empty
+names are ignored, and surrounding whitespace is removed before names are
+matched.
+
+`name-column` and `points-column` name the generated values and default to
+`NAME` and `POINTS`. Equal totals retain first-seen order: qualifier declaration
+order first, then source-row order. The surrounding table can use the normal
+`sort`, `sort-order`, `lines-max`, formatting, display, and filtering features.
+
+`ranked-points` and `qualifier` are rejected under the legacy root.
 
 ## Formats
 
@@ -735,9 +848,11 @@ the default is `value`.
 The following children are accepted in a `format`:
 
 - Arithmetic: `add`/`increment`, `substract`/`decrement`, `multiply`, `divide`,
-  `remainder`, `divide_trunc`, `divide_round`, `shift`, `round`, and `trunc`.
+  `remainder`, `divide_trunc`, `divide_round`, `shift`, `bit-count`, `round`,
+  and `trunc`.
   The historic spelling `substract` is intentional. Long-form `shift` shifts
-  left; the inline `>N` shorthand shifts right.
+  left; the inline `>N` shorthand shifts right. `bit-count` replaces the value
+  with the number of set bits in its 64-bit integer representation.
 - Aggregation: `sum`, `min`, `max`, and `concat`.
 - Text: `prefix`, `suffix`/`postfix`, `pad`, `trim`, `replace`, `uppercase`,
   `lowercase`, `capitalize`, and `case`.
@@ -951,10 +1066,13 @@ hi2txt | openhi2txt
 │   ├── field
 │   └── table
 │       ├── column
-│       └── field
+│       ├── field
+│       └── ranked-points (openhi2txt only)
+│           └── qualifier
 └── sameas
 ```
 
 The tree shows the grammar common to both roots. The `openhi2txt` root adds
 only the extensions indexed above: `structure file="dif"` with `offset` and
-`length`, `loop stop-when`, and `column source-row="output_index"`.
+`length`, `loop stop-when`, `column source-row="output_index"`, column-header
+visibility, and the `table/ranked-points/qualifier` hierarchy.

@@ -22,6 +22,13 @@ namespace openhi2txt {
 
 namespace {
 
+static bool hasVisibleColumnHeaders(const HiScoreTable& table) {
+    for (const auto& column : table.columns) {
+        if (!column.empty()) return true;
+    }
+    return false;
+}
+
 static fs::path resolveInputPath(const fs::path& mameRoot,
                                  const std::string& requestedGame,
                                  const Structure& s) {
@@ -121,13 +128,15 @@ static std::string renderResultXml(const HiScoreResult& result) {
             out << "  <table>\n";
         }
 
-        out << "    ";
-        for (const auto& col : table.columns) {
-            out << "<col>";
-            appendXmlEscaped(out, col);
-            out << "</col>";
+        if (hasVisibleColumnHeaders(table)) {
+            out << "    ";
+            for (const auto& col : table.columns) {
+                out << "<col>";
+                appendXmlEscaped(out, col);
+                out << "</col>";
+            }
+            out << "\n";
         }
-        out << "\n";
 
         for (const auto& row : table.rows) {
             out << "    <row>";

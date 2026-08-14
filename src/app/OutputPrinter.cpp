@@ -7,6 +7,13 @@ namespace openhi2txt {
 
 namespace {
 
+static bool hasVisibleColumnHeaders(const HiScoreTable& table) {
+    for (const auto& column : table.columns) {
+        if (!column.empty()) return true;
+    }
+    return false;
+}
+
 static void printXml(const HiScoreResult& result) {
     std::printf("<hi2txt>\n");
 
@@ -20,13 +27,15 @@ static void printXml(const HiScoreResult& result) {
             std::printf("  <table>\n");
         }
 
-        std::printf("    ");
-        for (const auto& col : tab.columns) {
-            std::printf("<col>");
-            Utils::xmlEscapePrintPreserveEntities(col);
-            std::printf("</col>");
+        if (hasVisibleColumnHeaders(tab)) {
+            std::printf("    ");
+            for (const auto& col : tab.columns) {
+                std::printf("<col>");
+                Utils::xmlEscapePrintPreserveEntities(col);
+                std::printf("</col>");
+            }
+            std::printf("\n");
         }
-        std::printf("\n");
 
         for (const auto& row : tab.rows) {
             std::printf("    <row>");
@@ -84,7 +93,7 @@ static void printText(const HiScoreResult& result) {
             std::printf("# %s\n", tab.id.c_str());
         }
 
-        printPipeLine(tab.columns);
+        if (hasVisibleColumnHeaders(tab)) printPipeLine(tab.columns);
         for (const auto& row : tab.rows) {
             printPipeLine(row);
         }

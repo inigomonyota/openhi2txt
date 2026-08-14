@@ -93,8 +93,11 @@ namespace openhi2txt {
 				"endianness", "swap-skip-order", "byte-skip", "byte-trim", "byte-trunc", "nibble-skip",
 				"nibble-trim", "byte-swap", "bit-swap", "table-index-format", "bitmask", "src-unit-size",
 				"dst-unit-size", "ascii-step", "format", "offset" } },
-			{ "output", { "id" } },
+			{ "output", { "id", "sort-method" } },
 			{ "table", { "id", "line-ignore", "line-ignore-operator", "sort", "sort-order", "sort-format", "lines-max", "display" } },
+			{ "sort", { "src", "order", "format" } },
+			{ "ranked-points", { "name-column", "points-column" } },
+			{ "qualifier", { "src", "points" } },
 			{ "column", { "id", "src", "format", "display" } },
 			{ "field", { "id", "src", "format", "display" } },
 			{ "txt", {} },
@@ -120,6 +123,7 @@ namespace openhi2txt {
 			{ "divide_round", {} },
 			{ "round", {} },
 			{ "shift", {} },
+			{ "bit-count", {} },
 			{ "replace", { "src", "dst", "all" } },
 			{ "uppercase", {} },
 			{ "lowercase", {} },
@@ -138,7 +142,8 @@ namespace openhi2txt {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "structure", { "offset", "length" } },
 			{ "loop", { "stop-when" } },
-			{ "column", { "source-row" } },
+			{ "table", { "show-empty" } },
+			{ "column", { "source-row", "header" } },
 		};
 		return allowed;
 	}
@@ -147,7 +152,7 @@ namespace openhi2txt {
 		static const std::unordered_set<std::string> formatParts = {
 			"add", "increment", "prefix", "multiply", "divide", "suffix", "postfix", "sum", "concat",
 			"min", "max", "pad", "trim", "substract", "decrement", "remainder", "trunc",
-			"divide_trunc", "divide_round", "round", "shift", "replace", "uppercase", "lowercase",
+			"divide_trunc", "divide_round", "round", "shift", "bit-count", "replace", "uppercase", "lowercase",
 			"capitalize", "case"
 		};
 		static const std::unordered_set<std::string> columnRefs = { "field", "column" };
@@ -159,7 +164,8 @@ namespace openhi2txt {
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
 			{ "output", { "table", "field" } },
-			{ "table", { "column", "field" } },
+			{ "table", { "column", "field", "sort", "ranked-points" } },
+			{ "ranked-points", { "qualifier" } },
 			{ "format", formatParts },
 			{ "add", columnRefs },
 			{ "increment", columnRefs },
@@ -182,6 +188,7 @@ namespace openhi2txt {
 			{ "divide_round", columnRefs },
 			{ "round", columnRefs },
 			{ "shift", columnRefs },
+			{ "bit-count", columnRefs },
 			{ "replace", columnRefs },
 			{ "uppercase", columnRefs },
 			{ "lowercase", columnRefs },
@@ -257,6 +264,35 @@ namespace openhi2txt {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
+		if ((name == "ranked-points" || name == "qualifier") && !allowOpenExtensions) {
+			error = "The element '" + name +
+				"' is an openhi2txt extension and requires the 'openhi2txt' root.";
+			return false;
+		}
+		if ((name == "sort" || (name == "output" && n->first_attribute("sort-method"))) &&
+			!allowOpenExtensions) {
+			error = "The " + name + " sorting extension requires an openhi2txt root.";
+			return false;
+		}
+		if (name == "output" && n->first_attribute("sort-method") &&
+			!ieq(trim(attr(n, "sort-method")), "midway")) {
+			error = "Unsupported output sort-method '" + attr(n, "sort-method") +
+				"'; expected midway.";
+			return false;
+		}
+		if (name == "sort") {
+			if (trim(attr(n, "src")).empty()) {
+				error = "A table sort element requires a non-empty src attribute.";
+				return false;
+			}
+			const std::string order = trim(attr(n, "order"));
+			if (!order.empty() && !ieq(order, "asc") && !ieq(order, "ascending") &&
+				!ieq(order, "desc") && !ieq(order, "descending")) {
+				error = "Invalid table sort order '" + order +
+					"'; expected asc or desc.";
+				return false;
+			}
+		}
 		const auto& attrsByElement = allowedAttrsByElement();
 		const auto attrIt = attrsByElement.find(name);
 		if (attrIt == attrsByElement.end()) {
@@ -342,6 +378,53 @@ namespace openhi2txt {
 			if (!ieq(sourceRow, "output_index")) {
 				error = "Unsupported column source-row value '" + sourceRow +
 					"'; expected output_index.";
+				return false;
+			}
+		}
+
+		if (name == "column" && n->first_attribute("header")) {
+			const std::string header = trim(attr(n, "header"));
+			if (!ieq(header, "true") && !ieq(header, "false") &&
+				!ieq(header, "yes") && !ieq(header, "no") &&
+				header != "1" && header != "0") {
+				error = "Invalid column header value '" + header +
+					"'; expected true or false.";
+				return false;
+			}
+		}
+
+		if (name == "table" && n->first_attribute("show-empty")) {
+			const std::string showEmpty = trim(attr(n, "show-empty"));
+			if (!ieq(showEmpty, "true") && !ieq(showEmpty, "false") &&
+				!ieq(showEmpty, "yes") && !ieq(showEmpty, "no") &&
+				showEmpty != "1" && showEmpty != "0") {
+				error = "Invalid table show-empty value '" + showEmpty +
+					"'; expected true or false.";
+				return false;
+			}
+		}
+
+		if (name == "ranked-points") {
+			bool hasQualifier = false;
+			for (auto* child = n->first_node("qualifier"); child;
+				 child = child->next_sibling("qualifier")) {
+				hasQualifier = true;
+			}
+			if (!hasQualifier) {
+				error = "A ranked-points element requires at least one qualifier.";
+				return false;
+			}
+		}
+
+		if (name == "qualifier") {
+			if (trim(attr(n, "src")).empty()) {
+				error = "A ranked-points qualifier requires a non-empty src attribute.";
+				return false;
+			}
+			uint64_t points = 0;
+			if (!parseUint64(attr(n, "points"), points) || points == 0 ||
+				points > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+				error = "A ranked-points qualifier requires a positive integer points value.";
 				return false;
 			}
 		}
@@ -891,6 +974,7 @@ namespace openhi2txt {
 					else if (ieq(cn, "divide_trunc")) addMathOp(FormatKind::DivideTrunc);
 					else if (ieq(cn, "divide_round")) addMathOp(FormatKind::DivideRound);
 					else if (ieq(cn, "shift")) addMathOp(FormatKind::Shift);
+					else if (ieq(cn, "bit-count")) addMathOp(FormatKind::BitCount);
 
 					else if (ieq(cn, "round")) { addMathOp(FormatKind::Round); f.doRound = true; }
 					else if (ieq(cn, "trunc")) { addMathOp(FormatKind::Trunc); f.doTrunc = true; }
@@ -1392,6 +1476,7 @@ namespace openhi2txt {
 				OutputDef& out = outputIt->second;
 				if (firstOutputWithId) def.outputOrder.push_back(outId);
 				out.id = outId;
+				out.sortMethod = attr(n, "sort-method");
 				const size_t firstTableIndex = out.tables.size();
 				const size_t firstFieldIndex = out.fields.size();
 
@@ -1402,11 +1487,34 @@ namespace openhi2txt {
 					Table tab;
 					tab.id = attr(t, "id");
 					tab.display = attr(t, "display");
+					tab.showEmpty = Utils::parseBool(attr(t, "show-empty"), false);
 					tab.lineIgnoreRaw = attr(t, "line-ignore");
 					tab.sortKey = attr(t, "sort");
 					tab.sortOrder = attr(t, "sort-order");
 					tab.sortFormat = formatAttr(t, "sort-format");
+					if (!tab.sortKey.empty())
+						tab.sortKeys.push_back({ tab.sortKey, tab.sortOrder, tab.sortFormat });
+					for (auto* key = t->first_node("sort"); key; key = key->next_sibling("sort")) {
+						SortKeyDef sortKey{ attr(key, "src"), attr(key, "order"), formatAttr(key) };
+						if (!trim(sortKey.src).empty()) tab.sortKeys.push_back(std::move(sortKey));
+					}
 					tab.linesMax = std::max(0, std::atoi(attr(t, "lines-max").c_str()));
+
+					if (auto* ranked = t->first_node("ranked-points")) {
+						tab.rankedPoints.enabled = true;
+						const std::string nameColumn = trim(attr(ranked, "name-column"));
+						const std::string pointsColumn = trim(attr(ranked, "points-column"));
+						if (!nameColumn.empty()) tab.rankedPoints.nameColumn = nameColumn;
+						if (!pointsColumn.empty()) tab.rankedPoints.pointsColumn = pointsColumn;
+
+						for (auto* qualifier = ranked->first_node("qualifier"); qualifier;
+							 qualifier = qualifier->next_sibling("qualifier")) {
+							RankedPointsSource source;
+							source.src = trim(attr(qualifier, "src"));
+							source.maxPoints = std::atoi(attr(qualifier, "points").c_str());
+							tab.rankedPoints.sources.push_back(std::move(source));
+						}
+					}
 
 					std::string igop = attr(t, "line-ignore-operator");
 					if (ieq(igop, "or")) tab.ignoreOp = IgnoreOp::Or;
@@ -1423,6 +1531,8 @@ namespace openhi2txt {
 							Column col{ attr(c, "id"), attr(c, "src"), formatAttr(c), attr(c, "display") };
 							if (c->first_attribute("source-row") && ieq(attr(c, "source-row"), "output_index"))
 								col.sourceRow = SourceRowKind::OutputIndex;
+							if (c->first_attribute("header"))
+								col.headerVisible = Utils::parseBool(attr(c, "header"), true);
 
 							if (trim(col.src).empty()) col.src = col.id;
 							if (col.id.empty() && !col.src.empty()) col.id = col.src;
