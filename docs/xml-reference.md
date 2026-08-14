@@ -112,6 +112,22 @@ The DOCTYPE is a compatibility marker, not a schema source. OpenHi2txt uses
 RapidXML to parse the document and validates the supported elements and
 attributes in its own code. It does not load, resolve, or validate a DTD.
 
+#### OpenHi2txt extension index
+
+Every extension in this table requires the `openhi2txt` root and a `requires`
+version at least as new as the version shown. OpenHi2txt rejects this syntax
+under the legacy `hi2txt` root.
+
+| Version | Extension | Syntax | Reference |
+| --- | --- | --- | --- |
+| 0.2.0 | Terminated loops | `loop@stop-when="ID:value"` | [Terminated loops](#terminated-loops-openhi2txt-020) |
+| 0.2.0 | Positional source rows | `column@source-row="output_index"` | [Positional source rows](#positional-source-rows-openhi2txt-020) |
+| 0.3.0 | Bounded DIF/CHD input | `structure@file="dif"` with `offset` and `length` | [DIF-backed logical disks](#dif-backed-logical-disks-openhi2txt-030) |
+
+All other grammar in this reference is shared with the legacy root unless its
+section explicitly identifies it as an OpenHi2txt extension. Merely changing
+the root does not enable or alter any decoding behavior.
+
 ## Top-level organization
 
 Both roots accept these child elements:
@@ -166,8 +182,8 @@ in document order and uses the first one whose file and checks match.
 | `file` | `.hi` by default, or another file relative to the game's data location, commonly an NVRAM file name. |
 | `output` | ID of the `output` to render. Omit it to select the unnamed output. |
 | `byte-swap` | Swaps fixed-size chunks across the entire selected input before decoding. |
-| `offset` | With `file="dif"`, absolute byte offset in the resolved logical disk. |
-| `length` | With `file="dif"`, number of logical-disk bytes supplied to the structure decoder. |
+| `offset` | OpenHi2txt 0.3.0 extension: with `file="dif"`, absolute byte offset in the resolved logical disk. |
+| `length` | OpenHi2txt 0.3.0 extension: with `file="dif"`, number of logical-disk bytes supplied to the structure decoder. |
 
 ### DIF-backed logical disks (OpenHi2txt 0.3.0)
 
@@ -938,3 +954,7 @@ hi2txt | openhi2txt
 │       └── field
 └── sameas
 ```
+
+The tree shows the grammar common to both roots. The `openhi2txt` root adds
+only the extensions indexed above: `structure file="dif"` with `offset` and
+`length`, `loop stop-when`, and `column source-row="output_index"`.
