@@ -116,7 +116,9 @@ static bool isInlineFormatToken(const std::string& tok) {
 static void collectFormatDepsDfs(
     const std::unordered_map<std::string, FormatDef>& fmts,
     const std::string& fmtId,
-    std::unordered_set<std::string>& out) {
+    std::unordered_set<std::string>& out,
+    std::unordered_set<std::string>& visited) {
+    if (!visited.insert(fmtId).second) return;
     auto it = Utils::findIdentifier(fmts, fmtId);
     if (it == fmts.end()) return;
     const FormatDef& f = it->second;
@@ -132,10 +134,10 @@ static void collectFormatDepsDfs(
             if (r.format.empty()) continue;
             for (const auto& tok : splitFormatChain(r.format)) {
                 if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
-                    collectFormatDepsDfs(fmts, tok, out);
+                    collectFormatDepsDfs(fmts, tok, out, visited);
                     continue;
                 }
-                if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, out);
+                if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, out, visited);
             }
         }
     };
@@ -148,10 +150,23 @@ static void collectFormatDepsDfs(
         if (p.format.empty()) continue;
         for (const auto& tok : splitFormatChain(p.format)) {
             if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
-                collectFormatDepsDfs(fmts, tok, out);
+                collectFormatDepsDfs(fmts, tok, out, visited);
                 continue;
             }
-            if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, out);
+            if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, out, visited);
+        }
+    }
+
+    for (const auto& op : f.mathOps) {
+        if (!op.hasReference) continue;
+        if (!op.reference.id.empty()) out.insert(op.reference.id);
+        if (op.reference.format.empty()) continue;
+        for (const auto& tok : splitFormatChain(op.reference.format)) {
+            if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
+                collectFormatDepsDfs(fmts, tok, out, visited);
+                continue;
+            }
+            if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, out, visited);
         }
     }
 }
@@ -160,12 +175,13 @@ static std::unordered_set<std::string> collectFormatDeps(
     const std::unordered_map<std::string, FormatDef>& fmts,
     const std::string& fmtChain) {
     std::unordered_set<std::string> deps;
+    std::unordered_set<std::string> visited;
     for (const auto& tok : splitFormatChain(fmtChain)) {
         if (Utils::findIdentifier(fmts, tok) != fmts.end()) {
-            collectFormatDepsDfs(fmts, tok, deps);
+            collectFormatDepsDfs(fmts, tok, deps, visited);
             continue;
         }
-        if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, deps);
+        if (!isInlineFormatToken(tok)) collectFormatDepsDfs(fmts, tok, deps, visited);
     }
     return deps;
 }
@@ -763,9 +779,10 @@ HiScoreResult ResultRenderer::render(const GameDef& def,
             std::unordered_set<std::string> globalOperandIds;
             for (const auto& formatEntry : def.formats) {
                 for (const auto& op : formatEntry.second.mathOps) {
-                    if (op.hasReference && !op.reference.id.empty()) {
-                        globalOperandIds.insert(op.reference.id);
-                    }
+                    if (!op.hasReference) continue;
+                    if (!op.reference.id.empty()) globalOperandIds.insert(op.reference.id);
+                    const auto dependencies = collectFormatDeps(def.formats, op.reference.format);
+                    globalOperandIds.insert(dependencies.begin(), dependencies.end());
                 }
             }
             for (auto& filteredRow : filtered) {

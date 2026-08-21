@@ -875,6 +875,9 @@ Or references to another field or column:
 ```
 
 Referenced `field` and `column` elements may themselves have a `format`.
+If that format depends on fields decoded outside the table's loop, those
+dependencies are available to every row. This permits a computed operand such
+as a sum of global counters to be used consistently across a table.
 
 Aggregation example:
 

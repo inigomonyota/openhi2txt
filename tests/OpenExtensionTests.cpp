@@ -509,6 +509,35 @@ void testMidwaySortBehavior() {
         "legacy roots reject show-empty clearly");
 }
 
+void testReferencedOperandFormatDependencies() {
+    using namespace openhi2txt;
+
+    const GameDef def = parseDefinition(legacyDefinition(
+        "<output><table id=\"ROLE\">"
+        "<column id=\"PERCENT\" src=\"PLAYS\" format=\"percent\"/>"
+        "</table></output>"
+        "<format id=\"total\"><sum>"
+        "<column id=\"COUNT_A\"/><column id=\"COUNT_B\"/>"
+        "</sum></format>"
+        "<format id=\"percent\" formatter=\"%.2f\">"
+        "<multiply>100</multiply>"
+        "<divide><field format=\"total\"/></divide>"
+        "</format>"), "formatted arithmetic operand dependencies parse");
+
+    std::vector<std::unordered_map<std::string, Value>> rows(2);
+    rows[0]["PLAYS"] = int64_t{ 1 };
+    rows[0]["COUNT_A"] = int64_t{ 1 };
+    rows[0]["COUNT_B"] = int64_t{ 1 };
+    rows[1]["PLAYS"] = int64_t{ 1 };
+
+    const auto result = ResultRenderer::render(def, rows, "", ReadOptions{});
+    expect(result.tables.size() == 1 && result.tables[0].rows.size() == 2,
+        "formatted arithmetic operands retain every relevant table row");
+    expect(result.tables[0].rows[0][0] == "50.00" &&
+        result.tables[0].rows[1][0] == "50.00",
+        "external fields used by an operand format propagate to every table row");
+}
+
 } // namespace
 
 int main() {
@@ -520,6 +549,7 @@ int main() {
     testRankedPointsBehavior();
     testColumnHeaderVisibility();
     testMidwaySortBehavior();
+    testReferencedOperandFormatDependencies();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed.\n";
