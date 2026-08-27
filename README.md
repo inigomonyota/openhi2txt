@@ -64,7 +64,8 @@ target_link_libraries(your_app PRIVATE openhi2txt::openhi2txt)
 The public API returns ordinary C++ containers and structs. Typical frontend
 startup code can bulk-load persisted score XML with `readAllPersistedGames()`,
 then call `refreshGame()` after a game exits to decode live `.hi`, NVRAM, or
-DIF-backed data.
+DIF-backed data. Call `decodeGame()` with one or more `HiScoreInput` byte
+buffers when the source is already in memory, such as a live MAME snapshot.
 
 ## Use It As A CLI Tool
 

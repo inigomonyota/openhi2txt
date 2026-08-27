@@ -6,6 +6,7 @@
 #include "io/Utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -30,6 +31,86 @@ static void mergeRows(std::vector<std::unordered_map<std::string, Value>>& dst,
             if (existing == dst[r].end()) dst[r].emplace(kv.first, kv.second);
             else existing->second = kv.second;
         }
+    }
+}
+
+enum class RawProcessStatus {
+    NotMatched,
+    Processed,
+    Error
+};
+
+static std::string canonicalFileKind(const std::string& fileKind) {
+    std::string kind = Utils::trim(fileKind.empty() ? ".hi" : fileKind);
+    if (Utils::ieq(kind, "hi")) return ".hi";
+    std::transform(kind.begin(), kind.end(), kind.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return kind;
+}
+
+static RawProcessStatus processRawStructure(InputProcessResult& res,
+                                            const std::vector<uint8_t>& raw,
+                                            const Structure& s,
+                                            const GameDef& def,
+                                            const std::string& sourceName,
+                                            const TraceSink* trace) {
+    const bool hasDefinitionChecks = !s.checkAll.empty() || !s.checkAny.empty();
+
+    // Size is a strict selector only when definition bytes are absent.
+    // This preserves official hi2txt's handling of layouts whose dumped
+    // file contains bytes beyond the selected hiscore.dat regions.
+    if (!hasDefinitionChecks && !s.checkSizes.empty()) {
+        bool ok = false;
+        for (int sz : s.checkSizes) {
+            if (sz > 0 && static_cast<size_t>(sz) == raw.size()) {
+                ok = true;
+                if (trace) trace->line("TRACE: matching structure: size = " + std::to_string(sz));
+                break;
+            }
+        }
+        if (!ok) return RawProcessStatus::NotMatched;
+    }
+    else if (!s.checkSizes.empty()) {
+        for (int sz : s.checkSizes) {
+            if (sz > 0 && static_cast<size_t>(sz) == raw.size()) {
+                if (trace) trace->line("TRACE: matching structure: size = " + std::to_string(sz));
+                break;
+            }
+        }
+    }
+
+    if (hasDefinitionChecks) {
+        bool ok = Processor::checkMatches(raw, s);
+        if (!ok && s.byteSwap > 1) {
+            auto swapped = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
+            ok = Processor::checkMatches(swapped, s);
+        }
+        if (!ok) return RawProcessStatus::NotMatched;
+    }
+
+    try {
+        std::vector<uint8_t> bytes = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
+        bytes = StructureSelector::applyDecodeRegions(bytes, s.decodeRegions);
+        if (trace) {
+            for (const auto& region : s.decodeRegions) {
+                trace->line("TRACE: decoded " + region.type + " region at offset " +
+                    std::to_string(region.offset) + ", size " + std::to_string(region.size));
+            }
+        }
+        res.ok = true;
+        if (res.inputPath.empty()) {
+            res.inputPath = fs::path(sourceName);
+            res.outputId = s.outputId;
+        }
+        if (trace) trace->line("TRACE: data taken from source: " + sourceName);
+        mergeRows(res.rows, Processor::extractRows(bytes, s, def, trace));
+        return RawProcessStatus::Processed;
+    }
+    catch (const std::exception& e) {
+        res.ok = false;
+        res.errorKind = HiScoreErrorKind::InvalidData;
+        res.error = e.what();
+        return RawProcessStatus::Error;
     }
 }
 
@@ -202,63 +283,9 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
             foundInputFile = true;
         }
 
-        const bool hasDefinitionChecks = !s.checkAll.empty() || !s.checkAny.empty();
-
-        // size gate (if present). Official hi2txt lets definition bytes select
-        // among old/new hiscore layouts even when the dumped file has extra bytes.
-        if (!hasDefinitionChecks && !s.checkSizes.empty()) {
-            bool ok = false;
-            for (int sz : s.checkSizes) {
-                if (sz > 0 && (int)raw.size() == sz) {
-                    ok = true;
-                    if (trace) trace->line("TRACE: matching structure: size = " + std::to_string(sz));
-                    break;
-                }
-            }
-            if (!ok) continue;
-        }
-        else if (!s.checkSizes.empty()) {
-            for (int sz : s.checkSizes) {
-                if (sz > 0 && (int)raw.size() == sz) {
-                    if (trace) trace->line("TRACE: matching structure: size = " + std::to_string(sz));
-                    break;
-                }
-            }
-        }
-
-        // defs gate (if present)
-        if (hasDefinitionChecks) {
-            bool ok = Processor::checkMatches(raw, s);
-            if (!ok && s.byteSwap > 1) {
-                auto swapped = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
-                ok = Processor::checkMatches(swapped, s);
-            }
-            if (!ok) continue;
-        }
-
-        try {
-            std::vector<uint8_t> bytes = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
-            bytes = StructureSelector::applyDecodeRegions(bytes, s.decodeRegions);
-            if (trace) {
-                for (const auto& region : s.decodeRegions) {
-                    trace->line("TRACE: decoded " + region.type + " region at offset " +
-                        std::to_string(region.offset) + ", size " + std::to_string(region.size));
-                }
-            }
-            res.ok = true;
-            if (res.inputPath.empty()) {
-                res.inputPath = p;
-                res.outputId = s.outputId;
-            }
-            if (trace) trace->line("TRACE: data taken from file: " + p.string());
-            mergeRows(res.rows, Processor::extractRows(bytes, s, def, trace));
-        }
-        catch (const std::exception& e) {
-            res.ok = false;
-            res.errorKind = HiScoreErrorKind::InvalidData;
-            res.error = e.what();
-            return res;
-        }
+        const RawProcessStatus status = processRawStructure(
+            res, raw, s, def, p.string(), trace);
+        if (status == RawProcessStatus::Error) return res;
     }
 
     if (!res.ok) {
@@ -266,6 +293,38 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
             ? HiScoreErrorKind::StructureNotMatched
             : HiScoreErrorKind::InputNotFound;
         res.error = "No matching structure found under " + mameRoot.string();
+    }
+    return res;
+}
+
+InputProcessResult InputProcessor::processBuffers(const GameDef& def,
+                                                  const std::vector<HiScoreInput>& inputs,
+                                                  const TraceSink* trace) {
+    InputProcessResult res;
+    bool foundInput = false;
+
+    for (const auto& s : def.structures) {
+        const std::string structureKind = canonicalFileKind(s.fileKind);
+        const auto found = std::find_if(inputs.begin(), inputs.end(),
+            [&](const HiScoreInput& input) {
+                return canonicalFileKind(input.fileKind) == structureKind;
+            });
+        if (found == inputs.end()) continue;
+        foundInput = true;
+
+        const std::string sourceName = found->sourceName.empty()
+            ? "memory:" + structureKind
+            : found->sourceName;
+        const RawProcessStatus status = processRawStructure(
+            res, found->bytes, s, def, sourceName, trace);
+        if (status == RawProcessStatus::Error) return res;
+    }
+
+    if (!res.ok) {
+        res.errorKind = foundInput
+            ? HiScoreErrorKind::StructureNotMatched
+            : HiScoreErrorKind::InputNotFound;
+        res.error = "No matching structure found in provided input buffers";
     }
     return res;
 }

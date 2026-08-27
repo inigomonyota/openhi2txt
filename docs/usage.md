@@ -210,9 +210,31 @@ if (result.ok) {
 }
 ```
 
-If the live `.hi`, NVRAM, or DIF-backed data contains a valid score table, the saved score
-XML is updated and the returned result contains the live data. If not, no saved
-XML is written and the frontend can keep its existing cached display entry.
+For bytes obtained without reading MAME's files, such as a live IPC snapshot,
+pass one or more named inputs directly:
+
+```cpp
+std::vector<openhi2txt::HiScoreInput> inputs{
+    { ".hi", hiscoreBytes, "mame://current-session/hiscore" }
+};
+
+auto result = context.decodeGame(gameName, inputs, read);
+if (result.ok) {
+    scoreCache[gameName] = std::move(result);
+}
+```
+
+`fileKind` matches the definition's `structure@file`; empty and `hi` are
+accepted as aliases for `.hi`. Multiple inputs allow a definition to combine,
+for example, `.hi` and NVRAM data through the same merge path used for files.
+For `file="dif"`, supply the logical byte window requested by the structure,
+not a CHD or DIF container. `decodeGame()` does not write `scoresDirectory`;
+the caller controls how frequently live results are cached.
+
+When `refreshGame()` finds a valid score table in file-backed `.hi`, NVRAM, or
+DIF data, it updates the saved score XML and returns the decoded data. If not,
+no saved XML is written and the frontend can keep its existing cached display
+entry.
 
 ## Result Shape
 

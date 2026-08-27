@@ -546,6 +546,39 @@ HiScoreResult Context::refreshGame(const std::string& gameName,
     return result;
 }
 
+HiScoreResult Context::decodeGame(const std::string& gameName,
+                                  const std::vector<HiScoreInput>& inputs,
+                                  const ReadOptions& readOptions) const {
+    HiScoreResult result;
+    result.game = gameName;
+
+    auto defRes = DefResolver::loadFromZip(
+        fs::path(options_.definitionsZip), fs::path(options_.mameRoot), gameName);
+    if (!defRes.ok) {
+        result.ok = false;
+        result.error = defRes.error;
+        result.errorKind = defRes.errorKind;
+        return result;
+    }
+
+    auto inRes = InputProcessor::processBuffers(defRes.def, inputs);
+    if (!inRes.ok) {
+        result.ok = false;
+        result.error = inRes.error;
+        result.errorKind = inRes.errorKind;
+        result.usedDefinition = defRes.usedDefId;
+        result.source = ScoreSource::None;
+        return result;
+    }
+
+    result = ResultRenderer::render(defRes.def, inRes.rows, inRes.outputId, readOptions);
+    result.game = gameName;
+    result.usedDefinition = defRes.usedDefId;
+    result.usedInputPath = inRes.inputPath.string();
+    result.source = ScoreSource::RealInput;
+    return result;
+}
+
 bool Context::hasInputForGame(const std::string& gameName) const {
     auto defRes = DefResolver::loadFromZip(fs::path(options_.definitionsZip), fs::path(options_.mameRoot), gameName);
     if (!defRes.ok) return false;

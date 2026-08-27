@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -601,6 +602,74 @@ void testStructureDecodeRegions() {
         "unknown structure decoder types are rejected during definition parsing");
 }
 
+void testInMemoryInputParity() {
+    using namespace openhi2txt;
+
+    const std::string definitionXml = openDefinition(
+        "<structure file=\".hi\" byte-swap=\"2\"><check><size>2</size></check>"
+        "<elt id=\"FIRST\" type=\"int\" size=\"1\"/>"
+        "<elt id=\"SECOND\" type=\"int\" size=\"1\"/></structure>"
+        "<structure file=\"nvram\"><check><size>1</size></check>"
+        "<elt id=\"BONUS\" type=\"int\" size=\"1\"/></structure>"
+        "<output><table><column id=\"FIRST\"/><column id=\"SECOND\"/>"
+        "<column id=\"BONUS\"/></table></output>");
+    const GameDef def = parseDefinition(definitionXml,
+        "in-memory parity definition parses");
+
+#ifdef _WIN32
+    const int processId = _getpid();
+#else
+    const int processId = getpid();
+#endif
+    const std::filesystem::path root = std::filesystem::temp_directory_path() /
+        ("openhi2txt-buffer-parity-" + std::to_string(processId));
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "hiscore", ec);
+    std::filesystem::create_directories(root / "nvram" / "memorygame", ec);
+
+    {
+        std::ofstream hi(root / "hiscore" / "memorygame.hi", std::ios::binary);
+        const char bytes[] = { 0x01, 0x02 };
+        hi.write(bytes, sizeof(bytes));
+    }
+    {
+        std::ofstream nvram(root / "nvram" / "memorygame" / "nvram", std::ios::binary);
+        const char byte = 0x07;
+        nvram.write(&byte, 1);
+    }
+
+    const InputProcessResult fileResult = InputProcessor::process(root, "memorygame", def);
+    const std::vector<HiScoreInput> inputs{
+        HiScoreInput{ "hi", { 0x01, 0x02 }, "mame://session/hiscore" },
+        HiScoreInput{ "NVRAM", { 0x07 }, "mame://session/nvram" }
+    };
+    const InputProcessResult memoryResult = InputProcessor::processBuffers(def, inputs);
+
+    expect(fileResult.ok && memoryResult.ok,
+        "file and in-memory inputs both match their structures");
+    expect(fileResult.rows == memoryResult.rows && fileResult.outputId == memoryResult.outputId,
+        "file and in-memory inputs produce identical decoded rows");
+    expect(valueAt(memoryResult.rows, 0, "FIRST") == 2 &&
+        valueAt(memoryResult.rows, 0, "SECOND") == 1 &&
+        valueAt(memoryResult.rows, 0, "BONUS") == 7,
+        "in-memory inputs use the ordinary transform and merge pipeline");
+    expect(memoryResult.inputPath.string() == "mame://session/hiscore",
+        "the first in-memory source identity is retained for diagnostics");
+
+    const InputProcessResult wrongSize = InputProcessor::processBuffers(
+        def, { HiScoreInput{ ".hi", { 0x01 }, {} } });
+    expect(!wrongSize.ok && wrongSize.errorKind == HiScoreErrorKind::StructureNotMatched,
+        "provided bytes with the wrong size report a structure mismatch");
+
+    const InputProcessResult wrongKind = InputProcessor::processBuffers(
+        def, { HiScoreInput{ "eeprom", { 0x01, 0x02 }, {} } });
+    expect(!wrongKind.ok && wrongKind.errorKind == HiScoreErrorKind::InputNotFound,
+        "an unrelated in-memory source kind reports missing input");
+
+    std::filesystem::remove_all(root, ec);
+}
+
 } // namespace
 
 int main() {
@@ -614,6 +683,7 @@ int main() {
     testMidwaySortBehavior();
     testReferencedOperandFormatDependencies();
     testStructureDecodeRegions();
+    testInMemoryInputParity();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed.\n";

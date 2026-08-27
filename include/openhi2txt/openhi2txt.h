@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -123,6 +124,16 @@ struct ContextOptions {
     DefaultScoreOptions scoreCache;
 };
 
+struct HiScoreInput {
+    // Matches structure@file in the game definition. Empty and "hi" are
+    // treated as aliases for ".hi".
+    std::string fileKind = ".hi";
+    std::vector<std::uint8_t> bytes;
+
+    // Optional diagnostic identity for HiScoreResult::usedInputPath.
+    std::string sourceName;
+};
+
 class Context {
 public:
     explicit Context(ContextOptions options);
@@ -135,6 +146,13 @@ public:
 
     HiScoreResult refreshGame(const std::string& gameName,
                               const ReadOptions& options = {}) const;
+
+    // Decode caller-provided source bytes without reading MAME's score files.
+    // For a DIF structure, bytes contains the structure's logical disk window,
+    // not the CHD or DIF container.
+    HiScoreResult decodeGame(const std::string& gameName,
+                             const std::vector<HiScoreInput>& inputs,
+                             const ReadOptions& options = {}) const;
 
     std::vector<std::string> listGames() const;
     std::vector<std::string> listDefaultGames() const;

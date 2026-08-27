@@ -26,6 +26,10 @@ public:
                                       const GameDef& def,
                                       const std::filesystem::path& explicitInputPath = {},
                                       const TraceSink* trace = nullptr);
+
+    static InputProcessResult processBuffers(const GameDef& def,
+                                             const std::vector<HiScoreInput>& inputs,
+                                             const TraceSink* trace = nullptr);
 };
 
 } // namespace openhi2txt
