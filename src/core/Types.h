@@ -209,6 +209,12 @@ struct CheckDef {
     std::vector<uint8_t> bytes;
 };
 
+struct DecodeRegion {
+    std::string type;
+    uint64_t offset = 0;
+    uint64_t size = 0;
+};
+
 struct Structure {
     std::string fileKind = ".hi";
     uint64_t inputOffset = 0;
@@ -222,6 +228,7 @@ struct Structure {
     std::vector<CheckDef> checkAll; // AND
     std::vector<CheckDef> checkAny; // OR (legacy inline)
     std::vector<std::string> hiscoreDefinitionTokens;
+    std::vector<DecodeRegion> decodeRegions;
     std::vector<StructureItem> items;
 };
 

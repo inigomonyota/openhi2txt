@@ -85,6 +85,7 @@ namespace openhi2txt {
 			{ "hi2txt", { "label", "ingame-score" } },
 			{ "openhi2txt", { "requires", "label", "ingame-score" } },
 			{ "structure", { "file", "output", "byte-swap" } },
+			{ "decode", { "type", "offset", "size" } },
 			{ "check", {} },
 			{ "definition", { "offset" } },
 			{ "size", {} },
@@ -160,7 +161,7 @@ namespace openhi2txt {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
 			{ "openhi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
-			{ "structure", { "check", "elt", "loop" } },
+			{ "structure", { "check", "decode", "elt", "loop" } },
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
 			{ "output", { "table", "field" } },
@@ -264,7 +265,7 @@ namespace openhi2txt {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
-		if ((name == "ranked-points" || name == "qualifier") && !allowOpenExtensions) {
+		if ((name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
 			error = "The element '" + name +
 				"' is an openhi2txt extension and requires the 'openhi2txt' root.";
 			return false;
@@ -370,6 +371,24 @@ namespace openhi2txt {
 					error = "Invalid structure length; expected a positive decimal or hexadecimal byte count.";
 					return false;
 				}
+			}
+		}
+
+		if (name == "decode") {
+			const std::string type = trim(attr(n, "type"));
+			if (!ieq(type, "namco-system12")) {
+				error = "Unsupported structure decoder '" + type + "'.";
+				return false;
+			}
+			uint64_t offset = 0;
+			uint64_t size = 0;
+			if (!parseUint64(attr(n, "offset"), offset)) {
+				error = "Invalid decode offset; expected a non-negative decimal or hexadecimal byte offset.";
+				return false;
+			}
+			if (!parseUint64(attr(n, "size"), size) || size == 0) {
+				error = "Invalid decode size; expected a positive decimal or hexadecimal byte count.";
+				return false;
 			}
 		}
 
@@ -1220,6 +1239,16 @@ namespace openhi2txt {
 				}
 				s.byteSwap = std::atoi(attr(n, "byte-swap").c_str());
 				s.outputId = attr(n, "output");
+
+				for (auto* d = n->first_node("decode"); d; d = d->next_sibling("decode")) {
+					DecodeRegion region;
+					region.type = ieq(trim(attr(d, "type")), "namco-system12")
+						? "namco-system12"
+						: trim(attr(d, "type"));
+					parseUint64(attr(d, "offset"), region.offset);
+					parseUint64(attr(d, "size"), region.size);
+					s.decodeRegions.push_back(std::move(region));
+				}
 
 				if (auto* ck = n->first_node("check")) {
 

@@ -238,6 +238,13 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
 
         try {
             std::vector<uint8_t> bytes = StructureSelector::applyStructByteSwap(raw, s.byteSwap);
+            bytes = StructureSelector::applyDecodeRegions(bytes, s.decodeRegions);
+            if (trace) {
+                for (const auto& region : s.decodeRegions) {
+                    trace->line("TRACE: decoded " + region.type + " region at offset " +
+                        std::to_string(region.offset) + ", size " + std::to_string(region.size));
+                }
+            }
             res.ok = true;
             if (res.inputPath.empty()) {
                 res.inputPath = p;

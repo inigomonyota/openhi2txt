@@ -105,7 +105,8 @@ Version 0.2.0 introduces `loop@stop-when` and
 `column@source-row="output_index"`. Existing definitions should keep the legacy
 root until they actually use an extension. Version 0.3.0 introduces bounded
 logical-disk input with `structure@file="dif"`, `structure@offset`, and
-`structure@length`. The root alone never changes
+`structure@length`. Version 0.4.0 introduces bounded, named binary decoders
+through `structure/decode`. The root alone never changes
 extraction, filtering, sorting, or rendering behavior.
 
 The DOCTYPE is a compatibility marker, not a schema source. OpenHi2txt uses
@@ -125,6 +126,7 @@ under the legacy `hi2txt` root.
 | 0.3.0 | Bounded DIF/CHD input | `structure@file="dif"` with `offset` and `length` | [DIF-backed logical disks](#dif-backed-logical-disks-openhi2txt-030) |
 | 0.3.0 | Ranked-points aggregation | `table/ranked-points/qualifier` | [Ranked-points aggregation](#ranked-points-aggregation-openhi2txt-030) |
 | 0.3.0 | Column-header visibility | `column@header="false"` | [Column-header visibility](#column-header-visibility-openhi2txt-030) |
+| 0.4.0 | Structure decode regions | `structure/decode` | [Structure decode regions](#structure-decode-regions-openhi2txt-040) |
 
 All other grammar in this reference is shared with the legacy root unless its
 section explicitly identifies it as an OpenHi2txt extension. Merely changing
@@ -233,6 +235,40 @@ is not stable as additional disk blocks are written.
 
 `file="dif"`, structure `offset`, and structure `length` are rejected under the
 legacy `hi2txt` root.
+
+### Structure decode regions (OpenHi2txt 0.4.0)
+
+Some games encrypt or otherwise transform complete blocks that contain several
+independent fields. A `decode` child preprocesses a bounded region before the
+ordinary `elt` and `loop` elements read it:
+
+```xml
+<structure file="at28c16">
+  <decode type="namco-system12" offset="0x100" size="0xE0"/>
+  <decode type="namco-system12" offset="0x400" size="0x168"/>
+
+  <elt id="SETTINGS" type="raw" offset="0x100" size="0xE0"/>
+  <!-- Further elements can address the decoded bytes normally. -->
+</structure>
+```
+
+`offset` is the byte offset in the selected input and `size` is the decoded
+payload length. Both accept decimal or hexadecimal values. Decoding preserves
+the input's size and offsets by replacing the encoded payload in a working
+copy; trailer bytes remain in place. Every region is bounds-checked, and a
+decoder-specific integrity failure rejects the input as invalid data.
+Structure-level byte swapping, when requested, occurs before these regions are
+decoded.
+
+The currently supported decoder type is:
+
+| Type | Purpose |
+|---|---|
+| `namco-system12` | Namco System 12 EEPROM blocks, including their rolling-XOR decoding and checksum validation. The encoded region occupies `size + 10` bytes. |
+
+The element is intentionally decoder-neutral: additional named algorithms can
+be added without changing how definitions bound or consume decoded regions.
+`decode` is rejected under the legacy `hi2txt` root.
 
 ### File-size checks
 
@@ -1055,6 +1091,7 @@ hi2txt | openhi2txt
 │   ├── check
 │   │   ├── definition
 │   │   └── size
+│   ├── decode (openhi2txt only)
 │   ├── elt
 │   └── loop
 │       └── elt
@@ -1077,5 +1114,6 @@ hi2txt | openhi2txt
 
 The tree shows the grammar common to both roots. The `openhi2txt` root adds
 only the extensions indexed above: `structure file="dif"` with `offset` and
-`length`, `loop stop-when`, `column source-row="output_index"`, column-header
-visibility, and the `table/ranked-points/qualifier` hierarchy.
+`length`, `structure/decode`, `loop stop-when`,
+`column source-row="output_index"`, column-header visibility, and the
+`table/ranked-points/qualifier` hierarchy.

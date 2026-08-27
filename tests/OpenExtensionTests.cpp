@@ -2,6 +2,7 @@
 #include "app/InputProcessor.h"
 #include "core/Processor.h"
 #include "core/ResultRenderer.h"
+#include "core/StructureSelector.h"
 #include "io/Utils.h"
 #include "openhi2txt/openhi2txt.h"
 #include "xml/XmlParser.h"
@@ -538,6 +539,68 @@ void testReferencedOperandFormatDependencies() {
         "external fields used by an operand format propagate to every table row");
 }
 
+void testStructureDecodeRegions() {
+    using namespace openhi2txt;
+
+    const std::string body =
+        "<structure file=\"at28c16\">"
+        "<decode type=\"namco-system12\" offset=\"2\" size=\"5\"/>"
+        "<elt id=\"HEADER\" type=\"raw\" size=\"2\"/>"
+        "<elt id=\"VALUE\" type=\"text\" size=\"5\"/>"
+        "</structure>";
+    auto parsed = XmlParser::parseWithDiagnostics(legacyDefinition(body));
+    expect(!parsed.ok && parsed.error.find("openhi2txt extension") != std::string::npos,
+        "legacy roots reject structure decoders clearly");
+
+    const GameDef def = parseDefinition(openDefinition(body), "structure decoder definition parses");
+    expect(def.structures.size() == 1 && def.structures[0].decodeRegions.size() == 1 &&
+        def.structures[0].decodeRegions[0].type == "namco-system12" &&
+        def.structures[0].decodeRegions[0].offset == 2 &&
+        def.structures[0].decodeRegions[0].size == 5,
+        "structure decoder metadata is retained");
+
+    const std::vector<uint8_t> encoded{
+        0x12, 0x34,
+        0xA4, 0xA7, 0x86, 0xDA, 0x7E, 0x52, 0x04,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    const auto decoded = StructureSelector::applyDecodeRegions(
+        encoded, def.structures[0].decodeRegions);
+    expect(decoded.size() == encoded.size() &&
+        std::string(decoded.begin() + 2, decoded.begin() + 7) == "SOC14",
+        "Namco System 12 regions decode without changing file layout");
+    const auto rows = Processor::extractRows(decoded, def.structures[0], def);
+    expect(rows.size() == 1 && rows[0].at("VALUE") == Value(std::string("SOC14")),
+        "ordinary structure elements consume decoded bytes");
+
+    auto corrupt = encoded;
+    corrupt[3] ^= 0x01;
+    bool rejected = false;
+    try {
+        (void)StructureSelector::applyDecodeRegions(corrupt, def.structures[0].decodeRegions);
+    }
+    catch (const std::exception& e) {
+        rejected = std::string(e.what()).find("checksum mismatch") != std::string::npos;
+    }
+    expect(rejected, "Namco System 12 decoder rejects corrupt regions by checksum");
+
+    rejected = false;
+    try {
+        DecodeRegion outside{ "namco-system12", encoded.size() - 2, 5 };
+        (void)StructureSelector::applyDecodeRegions(encoded, { outside });
+    }
+    catch (const std::exception& e) {
+        rejected = std::string(e.what()).find("exceeds the input file") != std::string::npos;
+    }
+    expect(rejected, "structure decoder regions are bounds-checked before decoding");
+
+    parsed = XmlParser::parseWithDiagnostics(openDefinition(
+        "<structure><decode type=\"future-cipher\" offset=\"0\" size=\"1\"/>"
+        "</structure>"));
+    expect(!parsed.ok && parsed.error.find("Unsupported structure decoder") != std::string::npos,
+        "unknown structure decoder types are rejected during definition parsing");
+}
+
 } // namespace
 
 int main() {
@@ -550,6 +613,7 @@ int main() {
     testColumnHeaderVisibility();
     testMidwaySortBehavior();
     testReferencedOperandFormatDependencies();
+    testStructureDecodeRegions();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed.\n";
