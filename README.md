@@ -67,7 +67,9 @@ then call `refreshGame()` after a game exits to decode live `.hi`, NVRAM, or
 DIF-backed data. Call `decodeGame()` with one or more `HiScoreInput` byte
 buffers when the source is already in memory, such as a live MAME snapshot.
 Call `planGameInputs()` to derive the conservative source ranges MAME should
-watch before sending a complete stabilized `.hi` or NVRAM snapshot.
+watch.  After stabilization, pass the complete set of offset-addressed ranges
+to `decodeSparseGame()`; OpenHi2txt reconstructs the decoder buffer without
+transmitting unrelated `.hi` or NVRAM bytes.
 
 ## Use It As A CLI Tool
 

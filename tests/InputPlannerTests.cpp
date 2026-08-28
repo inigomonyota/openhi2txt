@@ -2,6 +2,7 @@
 #include "core/InputPlanner.h"
 #include "core/Processor.h"
 #include "core/ResultRenderer.h"
+#include "core/SparseInput.h"
 #include "io/Utils.h"
 #include "xml/XmlParser.h"
 
@@ -17,6 +18,8 @@
 #include <vector>
 
 using namespace openhi2txt;
+
+std::string resultFingerprint(const HiScoreResult& result);
 
 namespace {
 
@@ -178,6 +181,76 @@ void testUnwatchedBytesCannotChangeRenderedResult() {
     changedScore[104] = 4;
     require(renderRows(changedScore) != baseline,
         "the fixture must prove that a watched score byte changes output");
+}
+
+void testSparseInputMaterialization() {
+    HiScoreSparseInput sparse;
+    sparse.fileKind = "saveram";
+    sparse.sourceSize = 16;
+    sparse.sourceName = "live:test";
+    sparse.ranges = {
+        HiScoreInputRange{10, {0xaa, 0xbb}},
+        HiScoreInputRange{2, {0x11, 0x22, 0x33}}
+    };
+
+    const auto result = SparseInput::materialize({sparse});
+    require(result.ok && result.inputs.size() == 1,
+        "valid sparse input materializes");
+    require(result.inputs.front().fileKind == "saveram" &&
+            result.inputs.front().sourceName == "live:test",
+        "sparse input identity is preserved");
+    require(result.inputs.front().bytes == std::vector<uint8_t>({
+        0, 0, 0x11, 0x22, 0x33, 0, 0, 0, 0, 0, 0xaa, 0xbb, 0, 0, 0, 0
+    }), "unprovided sparse bytes are zero-filled");
+
+    sparse.ranges.push_back(HiScoreInputRange{4, {0xff, 0xff}});
+    const auto overlap = SparseInput::materialize({sparse});
+    require(!overlap.ok, "overlapping sparse ranges are rejected");
+
+    sparse.ranges = {HiScoreInputRange{15, {1, 2}}};
+    const auto outside = SparseInput::materialize({sparse});
+    require(!outside.ok, "out-of-bounds sparse ranges are rejected");
+}
+
+void testSparseInputDecodesLikeCompleteInput() {
+    const GameDef def = dependencyDefinition();
+    const auto plan = InputPlanner::plan(def).front();
+    std::vector<uint8_t> complete(256, 0x7e);
+    complete[0] = 0x55;
+    complete[100] = 3;
+    complete[104] = 2;
+    complete[120] = 'A';
+    complete[121] = 'B';
+    complete[122] = 'C';
+    complete[123] = 0;
+    complete[124] = 1;
+
+    HiScoreSparseInput sparse;
+    sparse.fileKind = "nvram";
+    sparse.sourceSize = complete.size();
+    for (const auto& range : plan.watchRanges) {
+        const auto begin = complete.begin() + static_cast<std::size_t>(range.offset);
+        sparse.ranges.push_back({range.offset, {
+            begin, begin + static_cast<std::size_t>(range.length)
+        }});
+    }
+    const auto materialized = SparseInput::materialize({sparse});
+    require(materialized.ok, "planned ranges materialize");
+
+    const auto fullResult = InputProcessor::processBuffers(
+        def, {HiScoreInput{"nvram", complete, "full"}});
+    const auto sparseResult = InputProcessor::processBuffers(def, materialized.inputs);
+    require(fullResult.ok && sparseResult.ok, "full and sparse fixtures decode");
+
+    ReadOptions options;
+    options.includeExtra = true;
+    options.includeDebug = true;
+    const auto fullRendered = ResultRenderer::render(
+        def, fullResult.rows, fullResult.outputId, options);
+    const auto sparseRendered = ResultRenderer::render(
+        def, sparseResult.rows, sparseResult.outputId, options);
+    require(resultFingerprint(fullRendered) == resultFingerprint(sparseRendered),
+        "synthetic sparse input renders exactly like the complete source");
 }
 
 void testStoppedLoopConservativelyIncludesTail() {
@@ -362,6 +435,24 @@ int simulateFixture(const std::string& definitionPath,
 
     std::string baseline;
     if (!render(bytes, baseline) || baseline.empty()) fail("fixture did not decode to output");
+
+    HiScoreSparseInput sparse;
+    sparse.fileKind = fileKind;
+    sparse.sourceSize = bytes.size();
+    for (const auto& range : watchedRanges) {
+        if (range.offset > bytes.size() || range.length > bytes.size() - range.offset)
+            fail("fixture watch range lies outside its source buffer");
+        const auto begin = bytes.begin() + static_cast<size_t>(range.offset);
+        sparse.ranges.push_back({range.offset, {
+            begin, begin + static_cast<size_t>(range.length)
+        }});
+    }
+    const auto materialized = SparseInput::materialize({sparse});
+    require(materialized.ok && materialized.inputs.size() == 1,
+        "fixture sparse ranges materialize");
+    std::string sparseOutput;
+    require(render(materialized.inputs.front().bytes, sparseOutput) && sparseOutput == baseline,
+        "fixture sparse ranges render exactly like the complete source");
     auto watched = [&](size_t offset) {
         for (const auto& range : watchedRanges) {
             if (offset >= range.offset && offset - range.offset < range.length) return true;
@@ -428,6 +519,8 @@ int main(int argc, char** argv) {
     testDependenciesAndCoalescing();
     testHiddenValidatedElementIsWatched();
     testUnwatchedBytesCannotChangeRenderedResult();
+    testSparseInputMaterialization();
+    testSparseInputDecodesLikeCompleteInput();
     testStoppedLoopConservativelyIncludesTail();
     testSourceWindowAndByteSwap();
     testDecoderRegionIncludesCipherAndChecksum();

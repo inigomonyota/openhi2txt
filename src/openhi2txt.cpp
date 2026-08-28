@@ -4,6 +4,7 @@
 #include "app/InputProcessor.h"
 #include "core/ResultRenderer.h"
 #include "core/InputPlanner.h"
+#include "core/SparseInput.h"
 #include "io/ArchiveManager.h"
 #include "io/Utils.h"
 #include "xml/EntityMapper.h"
@@ -578,6 +579,20 @@ HiScoreResult Context::decodeGame(const std::string& gameName,
     result.usedInputPath = inRes.inputPath.string();
     result.source = ScoreSource::RealInput;
     return result;
+}
+
+HiScoreResult Context::decodeSparseGame(const std::string& gameName,
+                                        const std::vector<HiScoreSparseInput>& inputs,
+                                        const ReadOptions& readOptions) const {
+    auto materialized = SparseInput::materialize(inputs);
+    if (!materialized.ok) {
+        HiScoreResult result;
+        result.game = gameName;
+        result.error = materialized.error;
+        result.errorKind = HiScoreErrorKind::InvalidData;
+        return result;
+    }
+    return decodeGame(gameName, materialized.inputs, readOptions);
 }
 
 HiScoreInputPlanResult Context::planGameInputs(const std::string& gameName) const {

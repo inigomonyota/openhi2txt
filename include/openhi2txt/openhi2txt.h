@@ -134,6 +134,28 @@ struct HiScoreInput {
     std::string sourceName;
 };
 
+struct HiScoreInputRange {
+    // Absolute offset in the logical source.  For ordinary file-like inputs
+    // this is a byte offset from zero; disk-backed inputs may use an absolute
+    // logical-disk offset.
+    std::uint64_t offset = 0;
+    std::vector<std::uint8_t> bytes;
+};
+
+struct HiScoreSparseInput {
+    std::string fileKind = ".hi";
+
+    // The decoder buffer represents [sourceOffset, sourceOffset + sourceSize).
+    // Ordinary NVRAM uses sourceOffset zero.  A disk definition can use its
+    // XML input window offset without materializing the complete disk.
+    std::uint64_t sourceOffset = 0;
+    std::uint64_t sourceSize = 0;
+    std::vector<HiScoreInputRange> ranges;
+
+    // Optional diagnostic identity for HiScoreResult::usedInputPath.
+    std::string sourceName;
+};
+
 struct HiScoreWatchRange {
     // Offset in the live/persistent source exposed by MAME. For a logical
     // disk source this is an absolute byte offset, including the XML window.
@@ -154,8 +176,9 @@ struct HiScoreInputPlan {
     std::uint64_t sourceWindowOffset = 0;
     std::uint64_t sourceWindowLength = 0;
 
-    // Conservative watch ranges. For ordinary .hi and NVRAM sources, MAME can
-    // watch these ranges but send the complete source image after stabilization.
+    // Conservative watch ranges.  A live source can return all these ranges
+    // after stabilization and decodeSparseGame() will reconstruct the decoder
+    // buffer without requiring unrelated source bytes.
     std::vector<HiScoreWatchRange> watchRanges;
 };
 
@@ -187,6 +210,13 @@ public:
     HiScoreResult decodeGame(const std::string& gameName,
                              const std::vector<HiScoreInput>& inputs,
                              const ReadOptions& options = {}) const;
+
+    // Decode offset-addressed source ranges without reading MAME's score files.
+    // Unspecified bytes in each declared source window are materialized as zero
+    // before entering the same decoder path used by decodeGame().
+    HiScoreResult decodeSparseGame(const std::string& gameName,
+                                   const std::vector<HiScoreSparseInput>& inputs,
+                                   const ReadOptions& options = {}) const;
 
     // Describe the persistent-source bytes which can affect decoded output.
     // One entry is returned for each alternative structure in the definition.

@@ -254,14 +254,16 @@ filtering, referenced formatting operands, and hidden values whose validation
 can reject the complete snapshot. Adjacent ranges are coalesced.
 
 For `.hi` files and ordinary EEPROM/SRAM/NVRAM sources, watch only these ranges
-but send the complete source image after they stabilize. Pass that image to
-`decodeGame()` unchanged. This prevents unrelated persistent-state activity
-from delaying updates without requiring sparse-buffer reconstruction.
+and return the complete contents of every range after they stabilize. Pass the
+offset-addressed ranges to `decodeSparseGame()`. It fills bytes outside the
+planned ranges with zero and then uses the same decoder path as `decodeGame()`.
+Each sparse snapshot should contain every planned range so it is independently
+decodable after startup or reconnection.
 
 For DIF/CHD definitions, range offsets are absolute logical-disk offsets and
-`sourceWindowOffset`/`sourceWindowLength` identify the XML-defined window.
-Unlike normal NVRAM, a disk integration should return only that logical window
-or use a future sparse-window transport; it should not transmit the whole disk.
+`sourceWindowOffset`/`sourceWindowLength` identify the XML-defined decoder
+window. Set the sparse input's `sourceOffset` and `sourceSize` to that window;
+the complete disk is never materialized or transmitted.
 
 When `refreshGame()` finds a valid score table in file-backed `.hi`, NVRAM, or
 DIF data, it updates the saved score XML and returns the decoded data. If not,

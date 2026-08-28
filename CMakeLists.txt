@@ -31,6 +31,7 @@ add_library(openhi2txt STATIC
     src/core/InputPlanner.cpp
     src/core/Processor.cpp
     src/core/ResultRenderer.cpp
+    src/core/SparseInput.cpp
     src/core/StructureSelector.cpp
     src/io/ArchiveManager.cpp
     src/io/ChdReader.cpp
