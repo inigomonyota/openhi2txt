@@ -28,6 +28,7 @@ add_library(openhi2txt STATIC
     src/app/DefResolver.cpp
     src/app/InputProcessor.cpp
     src/core/Formatter.cpp
+    src/core/InputPlanner.cpp
     src/core/Processor.cpp
     src/core/ResultRenderer.cpp
     src/core/StructureSelector.cpp
@@ -200,4 +201,14 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
     )
     add_test(NAME openhi2txt_open_extension_tests COMMAND openhi2txt_open_extension_tests)
+
+    add_executable(openhi2txt_input_planner_tests
+        tests/InputPlannerTests.cpp
+    )
+    target_link_libraries(openhi2txt_input_planner_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_input_planner_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_input_planner_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    add_test(NAME openhi2txt_input_planner_tests COMMAND openhi2txt_input_planner_tests)
 endif()

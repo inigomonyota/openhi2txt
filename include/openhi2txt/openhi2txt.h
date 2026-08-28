@@ -134,6 +134,40 @@ struct HiScoreInput {
     std::string sourceName;
 };
 
+struct HiScoreWatchRange {
+    // Offset in the live/persistent source exposed by MAME. For a logical
+    // disk source this is an absolute byte offset, including the XML window.
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+};
+
+struct HiScoreInputPlan {
+    // Index of the alternative <structure> in the resolved definition.
+    std::size_t structureIndex = 0;
+    std::string fileKind = ".hi";
+    std::string outputId;
+
+    // Exact accepted decoder-buffer sizes, when the definition declares them.
+    std::vector<std::uint64_t> acceptedBufferSizes;
+
+    // Logical source window used by container-backed inputs such as DIF/CHD.
+    std::uint64_t sourceWindowOffset = 0;
+    std::uint64_t sourceWindowLength = 0;
+
+    // Conservative watch ranges. For ordinary .hi and NVRAM sources, MAME can
+    // watch these ranges but send the complete source image after stabilization.
+    std::vector<HiScoreWatchRange> watchRanges;
+};
+
+struct HiScoreInputPlanResult {
+    bool ok = false;
+    std::string error;
+    HiScoreErrorKind errorKind = HiScoreErrorKind::None;
+    std::string game;
+    std::string usedDefinition;
+    std::vector<HiScoreInputPlan> inputs;
+};
+
 class Context {
 public:
     explicit Context(ContextOptions options);
@@ -153,6 +187,10 @@ public:
     HiScoreResult decodeGame(const std::string& gameName,
                              const std::vector<HiScoreInput>& inputs,
                              const ReadOptions& options = {}) const;
+
+    // Describe the persistent-source bytes which can affect decoded output.
+    // One entry is returned for each alternative structure in the definition.
+    HiScoreInputPlanResult planGameInputs(const std::string& gameName) const;
 
     std::vector<std::string> listGames() const;
     std::vector<std::string> listDefaultGames() const;

@@ -3,6 +3,7 @@
 #include "app/DefResolver.h"
 #include "app/InputProcessor.h"
 #include "core/ResultRenderer.h"
+#include "core/InputPlanner.h"
 #include "io/ArchiveManager.h"
 #include "io/Utils.h"
 #include "xml/EntityMapper.h"
@@ -576,6 +577,24 @@ HiScoreResult Context::decodeGame(const std::string& gameName,
     result.usedDefinition = defRes.usedDefId;
     result.usedInputPath = inRes.inputPath.string();
     result.source = ScoreSource::RealInput;
+    return result;
+}
+
+HiScoreInputPlanResult Context::planGameInputs(const std::string& gameName) const {
+    HiScoreInputPlanResult result;
+    result.game = gameName;
+
+    auto defRes = DefResolver::loadFromZip(
+        fs::path(options_.definitionsZip), fs::path(options_.mameRoot), gameName);
+    if (!defRes.ok) {
+        result.error = defRes.error;
+        result.errorKind = defRes.errorKind;
+        return result;
+    }
+
+    result.ok = true;
+    result.usedDefinition = defRes.usedDefId;
+    result.inputs = InputPlanner::plan(defRes.def);
     return result;
 }
 

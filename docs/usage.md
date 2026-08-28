@@ -231,6 +231,38 @@ For `file="dif"`, supply the logical byte window requested by the structure,
 not a CHD or DIF container. `decodeGame()` does not write `scoresDirectory`;
 the caller controls how frequently live results are cached.
 
+### Planning live watch ranges
+
+Before asking MAME to observe a live source, obtain the conservative watch
+plan derived from the resolved XML definition:
+
+```cpp
+auto plan = context.planGameInputs(gameName);
+if (plan.ok) {
+    for (const auto& input : plan.inputs) {
+        // input.fileKind identifies the persistent source.
+        // input.watchRanges contains the offsets MAME needs to observe.
+    }
+}
+```
+
+There is one `HiScoreInputPlan` for each alternative `<structure>`. Declared
+sizes and output IDs are retained so the live integration can select the
+appropriate alternative. Each range includes all bytes that can affect output,
+including structure checks, loop stop conditions, table placement, sorting,
+filtering, referenced formatting operands, and hidden values whose validation
+can reject the complete snapshot. Adjacent ranges are coalesced.
+
+For `.hi` files and ordinary EEPROM/SRAM/NVRAM sources, watch only these ranges
+but send the complete source image after they stabilize. Pass that image to
+`decodeGame()` unchanged. This prevents unrelated persistent-state activity
+from delaying updates without requiring sparse-buffer reconstruction.
+
+For DIF/CHD definitions, range offsets are absolute logical-disk offsets and
+`sourceWindowOffset`/`sourceWindowLength` identify the XML-defined window.
+Unlike normal NVRAM, a disk integration should return only that logical window
+or use a future sparse-window transport; it should not transmit the whole disk.
+
 When `refreshGame()` finds a valid score table in file-backed `.hi`, NVRAM, or
 DIF data, it updates the saved score XML and returns the decoded data. If not,
 no saved XML is written and the frontend can keep its existing cached display
