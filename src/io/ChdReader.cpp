@@ -39,8 +39,11 @@ struct ChdReader::Impl {
     std::unordered_map<uint32_t, std::vector<uint8_t>> hunkCache;
 
     ~Impl() {
+        // libchdr's child handle owns its parent and chd_close() recursively
+        // closes the complete chain. Closing both handles here double-frees the
+        // parent whenever a DIF overlay is open.
         if (overlay) chd_close(overlay);
-        if (parent) chd_close(parent);
+        else if (parent) chd_close(parent);
         if (overlayFile) std::fclose(overlayFile);
         if (parentFile) std::fclose(parentFile);
     }
