@@ -83,7 +83,8 @@ namespace openhi2txt {
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& allowedAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "label", "ingame-score" } },
-			{ "openhi2txt", { "requires", "label", "ingame-score" } },
+			{ "openhi2txt", { "requires", "id", "label", "ingame-score" } },
+			{ "identity", { "type", "machine", "software-list", "software" } },
 			{ "structure", { "file", "output", "byte-swap" } },
 			{ "decode", { "type", "offset", "size" } },
 			{ "check", {} },
@@ -160,7 +161,7 @@ namespace openhi2txt {
 		static const std::unordered_set<std::string> concatChildren = { "field", "column", "txt" };
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
-			{ "openhi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
+			{ "openhi2txt", { "identity", "structure", "bitmask", "output", "format", "charset", "sameas" } },
 			{ "structure", { "check", "decode", "elt", "loop" } },
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
@@ -265,7 +266,7 @@ namespace openhi2txt {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
-		if ((name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
+		if ((name == "identity" || name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
 			error = "The element '" + name +
 				"' is an openhi2txt extension and requires the 'openhi2txt' root.";
 			return false;
@@ -291,6 +292,33 @@ namespace openhi2txt {
 				!ieq(order, "desc") && !ieq(order, "descending")) {
 				error = "Invalid table sort order '" + order +
 					"'; expected asc or desc.";
+				return false;
+			}
+		}
+		if (name == "identity") {
+			if (!ieq(trim(attr(n, "type")), "mame")) {
+				error = "Unsupported identity type '" + attr(n, "type") + "'.";
+				return false;
+			}
+			if (trim(attr(n, "machine")).empty()) {
+				error = "A MAME identity requires a non-empty machine attribute.";
+				return false;
+			}
+			if (!trim(attr(n, "software")).empty() && trim(attr(n, "software-list")).empty()) {
+				error = "A MAME software identity requires a non-empty software-list attribute.";
+				return false;
+			}
+		}
+		if (name == "openhi2txt" && n->first_node("identity")) {
+			const std::string id = trim(attr(n, "id"));
+			if (id.empty()) {
+				error = "An OpenHi2txt definition declaring an identity requires a non-empty id attribute.";
+				return false;
+			}
+			if (id == "." || id == ".." || std::any_of(id.begin(), id.end(), [](unsigned char ch) {
+				return !(std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.');
+			})) {
+				error = "An OpenHi2txt definition id may contain only letters, digits, '.', '_', and '-'.";
 				return false;
 			}
 		}
@@ -945,6 +973,18 @@ namespace openhi2txt {
 
 		auto* root = firstElementNode(doc);
 		if (!isDefinitionRoot(root)) return def;
+		if (ieq(elementName(root), "openhi2txt")) {
+			def.id = trim(attr(root, "id"));
+			for (auto* identity = root->first_node("identity"); identity;
+				 identity = identity->next_sibling("identity")) {
+				GameDef::Identity parsedIdentity;
+				parsedIdentity.type = trim(attr(identity, "type"));
+				parsedIdentity.machine = trim(attr(identity, "machine"));
+				parsedIdentity.softwareList = trim(attr(identity, "software-list"));
+				parsedIdentity.software = trim(attr(identity, "software"));
+				def.identities.push_back(std::move(parsedIdentity));
+			}
+		}
 
 		for (auto* n = root->first_node(); n; n = n->next_sibling()) {
 			const char* nm = n->name();

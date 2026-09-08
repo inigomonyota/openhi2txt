@@ -106,7 +106,8 @@ Version 0.2.0 introduces `loop@stop-when` and
 root until they actually use an extension. Version 0.3.0 introduces bounded
 logical-disk input with `structure@file="dif"`, `structure@offset`, and
 `structure@length`. Version 0.4.0 introduces bounded, named binary decoders
-through `structure/decode`. The root alone never changes
+through `structure/decode`. Version 0.5.0 introduces structured MAME identity
+bindings through the root `id` attribute and `identity` child. The root alone never changes
 extraction, filtering, sorting, or rendering behavior.
 
 The DOCTYPE is a compatibility marker, not a schema source. OpenHi2txt uses
@@ -127,6 +128,30 @@ under the legacy `hi2txt` root.
 | 0.3.0 | Ranked-points aggregation | `table/ranked-points/qualifier` | [Ranked-points aggregation](#ranked-points-aggregation-openhi2txt-030) |
 | 0.3.0 | Column-header visibility | `column@header="false"` | [Column-header visibility](#column-header-visibility-openhi2txt-030) |
 | 0.4.0 | Structure decode regions | `structure/decode` | [Structure decode regions](#structure-decode-regions-openhi2txt-040) |
+| 0.5.0 | MAME identity binding | `openhi2txt@id` and `identity` | [MAME identity bindings](#mame-identity-bindings-openhi2txt-050) |
+
+### MAME identity bindings (OpenHi2txt 0.5.0)
+
+Software-list definitions can identify their runtime source without encoding
+that identity in the ZIP entry name:
+
+```xml
+<openhi2txt requires="0.5.0" id="genesis_tecmobb">
+  <identity type="mame" machine="genesis"
+            software-list="megadriv" software="tecmobb"/>
+  <!-- structures and output -->
+</openhi2txt>
+```
+
+`id` is the stable OpenHi2txt definition and persisted-score key. `machine` is
+the actual MAME system used to launch the software and to name its NVRAM
+directory. `software-list` identifies the catalog entry, while `software` is
+its short name. These are input identity facts, not decoding instructions.
+More than one `identity` may point to the same definition, but a single MAME
+identity may not be declared by multiple definitions.
+
+This extension is intentionally unavailable under the legacy `hi2txt` root,
+so original hi2txt safely ignores OpenHi2txt-only console definitions.
 
 All other grammar in this reference is shared with the legacy root unless its
 section explicitly identifies it as an OpenHi2txt extension. Merely changing

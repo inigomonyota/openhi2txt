@@ -124,6 +124,24 @@ struct ContextOptions {
     DefaultScoreOptions scoreCache;
 };
 
+// Structured identity reported by MAME or supplied by an embedding frontend.
+// OpenHi2txt owns the mapping from this identity to a definition.
+struct MameRuntimeIdentity {
+    std::string machine;
+    std::string softwareList;
+    std::string software;
+};
+
+struct MameDefinitionResolution {
+    bool ok = false;
+    std::string definitionId;
+    std::string definitionEntry;
+    std::string error;
+    HiScoreErrorKind errorKind = HiScoreErrorKind::None;
+};
+
+std::string mameDefinitionKey(const MameRuntimeIdentity& identity);
+
 struct HiScoreInput {
     // Matches structure@file in the game definition. Empty and "hi" are
     // treated as aliases for ".hi".
@@ -195,7 +213,20 @@ class Context {
 public:
     explicit Context(ContextOptions options);
 
+    // Resolve structured MAME identity to an OpenHi2txt definition. Explicit
+    // <identity> bindings on <openhi2txt> definitions take precedence over
+    // the legacy <machine>_<software> archive-entry convention. Machine-only
+    // launches retain the traditional direct <machine>.xml lookup.
+    MameDefinitionResolution resolveDefinition(const MameRuntimeIdentity& identity) const;
+
+    // Build the definition identity index ahead of latency-sensitive lookups.
+    // Integrations with a render loop can call this during their normal startup
+    // loading phase; subsequent structured-identity resolution is cached.
+    void prepareMameDefinitionIndex() const;
+
     HiScoreResult readGame(const std::string& gameName,
+                           const ReadOptions& options = {}) const;
+    HiScoreResult readGame(const MameRuntimeIdentity& identity,
                            const ReadOptions& options = {}) const;
 
     std::unordered_map<std::string, HiScoreResult> readAllPersistedGames(
@@ -203,11 +234,16 @@ public:
 
     HiScoreResult refreshGame(const std::string& gameName,
                               const ReadOptions& options = {}) const;
+    HiScoreResult refreshGame(const MameRuntimeIdentity& identity,
+                              const ReadOptions& options = {}) const;
 
     // Decode caller-provided source bytes without reading MAME's score files.
     // For a DIF structure, bytes contains the structure's logical disk window,
     // not the CHD or DIF container.
     HiScoreResult decodeGame(const std::string& gameName,
+                             const std::vector<HiScoreInput>& inputs,
+                             const ReadOptions& options = {}) const;
+    HiScoreResult decodeGame(const MameRuntimeIdentity& identity,
                              const std::vector<HiScoreInput>& inputs,
                              const ReadOptions& options = {}) const;
 
@@ -217,22 +253,32 @@ public:
     HiScoreResult decodeSparseGame(const std::string& gameName,
                                    const std::vector<HiScoreSparseInput>& inputs,
                                    const ReadOptions& options = {}) const;
+    HiScoreResult decodeSparseGame(const MameRuntimeIdentity& identity,
+                                   const std::vector<HiScoreSparseInput>& inputs,
+                                   const ReadOptions& options = {}) const;
 
     // Describe the persistent-source bytes which can affect decoded output.
     // One entry is returned for each alternative structure in the definition.
     HiScoreInputPlanResult planGameInputs(const std::string& gameName) const;
+    HiScoreInputPlanResult planGameInputs(const MameRuntimeIdentity& identity) const;
 
     std::vector<std::string> listGames() const;
     std::vector<std::string> listDefaultGames() const;
 
     bool hasInputForGame(const std::string& gameName) const;
+    bool hasInputForGame(const MameRuntimeIdentity& identity) const;
     bool hasDefaultForGame(const std::string& gameName) const;
+    bool hasDefaultForGame(const MameRuntimeIdentity& identity) const;
 
 private:
     ContextOptions options_;
     mutable std::mutex cacheMutex_;
     mutable std::unordered_map<std::string, HiScoreResult> defaultCache_;
     mutable std::unordered_set<std::string> defaultMisses_;
+    mutable bool identityIndexLoaded_ = false;
+    mutable std::unordered_map<std::string, std::pair<std::string, std::string>> identityIndex_;
+    mutable std::unordered_map<std::string, std::string> identityIndexErrors_;
+    mutable std::unordered_map<std::string, MameDefinitionResolution> identityResolutionCache_;
 };
 
 } // namespace openhi2txt

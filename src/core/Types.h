@@ -311,6 +311,19 @@ struct OutputDef {
 };
 
 struct GameDef {
+    struct Identity {
+        std::string type;
+        std::string machine;
+        std::string softwareList;
+        std::string software;
+    };
+
+    // OpenHi2txt definitions may declare a stable ID and one or more
+    // external identities. Legacy hi2txt definitions leave these empty and
+    // continue to be resolved by archive-entry name.
+    std::string id;
+    std::vector<Identity> identities;
+
     std::vector<Structure> structures;
     std::unordered_map<std::string, FormatDef> formats;
     std::unordered_map<std::string, Charset> charsets;

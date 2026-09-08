@@ -71,12 +71,29 @@ watch.  After stabilization, pass the complete set of offset-addressed ranges
 to `decodeSparseGame()`; OpenHi2txt reconstructs the decoder buffer without
 transmitting unrelated `.hi` or NVRAM bytes.
 
+With the companion MAME hiscore plugin, `MameLiveClient` owns the localhost
+connection, identity handshake, watch negotiation, reconnection, sparse
+reconstruction, and decoding pipeline. Applications receive decoded
+`HiScoreResult` updates without implementing the wire protocol.
+
+Frontends may supply a structured MAME identity (`machine`, `softwareList`,
+and `software`) instead of constructing definition filenames. OpenHi2txt 0.5.0
+can bind that identity in an `<openhi2txt id="...">` definition and uses the
+same resolver for persisted/default display, static NVRAM extraction, direct
+buffer decoding, and live updates.
+
 ## Use It As A CLI Tool
 
 The CLI is built by default and produces an `openhi2txt` executable:
 
 ```text
 openhi2txt -d hi2txt.zip -m <mame> -g <romname> -xml
+```
+
+Software-list NVRAM can be read without live capture:
+
+```text
+openhi2txt --defs hi2txt.zip --mame-root <mame> --machine genesis --software-list megadriv --software tecmobb --xml
 ```
 
 Original hi2txt-style arguments are also accepted, including `-descr`/`-ds`,

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(openhi2txt
-    VERSION 0.4.0
+    VERSION 0.5.0
     LANGUAGES CXX
 )
 
@@ -37,12 +37,16 @@ add_library(openhi2txt STATIC
     src/io/ChdReader.cpp
     src/io/HiscoreDat.cpp
     src/io/Utils.cpp
+    src/live/LiveProtocol.cpp
+    src/live/MameLiveClient.cpp
     src/xml/XmlParser.cpp
 )
 
 add_library(openhi2txt::openhi2txt ALIAS openhi2txt)
 
 target_compile_features(openhi2txt PUBLIC cxx_std_17)
+find_package(Threads REQUIRED)
+target_link_libraries(openhi2txt PUBLIC Threads::Threads)
 
 set_target_properties(openhi2txt PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lib"
@@ -143,6 +147,17 @@ endfunction()
 openhi2txt_add_libchdr()
 target_link_libraries(openhi2txt PRIVATE chdr-static)
 
+if(MSVC)
+    # The bundled static zlib uses zs.lib. Some transitive objects carry the
+    # conventional zlib.lib default-library directive; suppress that duplicate
+    # for every consumer of this static library.
+    target_link_options(openhi2txt INTERFACE /NODEFAULTLIB:zlib.lib)
+endif()
+
+if(WIN32)
+    target_link_libraries(openhi2txt PUBLIC ws2_32)
+endif()
+
 if(OPENHI2TXT_BUILD_CLI)
     set(OPENHI2TXT_CLI_RESOURCES)
     if(WIN32)
@@ -212,4 +227,30 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
     )
     add_test(NAME openhi2txt_input_planner_tests COMMAND openhi2txt_input_planner_tests)
+
+    add_executable(openhi2txt_live_protocol_tests
+        tests/LiveProtocolTests.cpp
+    )
+    target_link_libraries(openhi2txt_live_protocol_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_live_protocol_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_live_protocol_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    add_test(NAME openhi2txt_live_protocol_tests COMMAND openhi2txt_live_protocol_tests)
+
+    add_executable(openhi2txt_identity_resolution_tests
+        tests/IdentityResolutionTests.cpp
+    )
+    target_link_libraries(openhi2txt_identity_resolution_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_identity_resolution_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_identity_resolution_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    if(MSVC)
+        set_target_properties(openhi2txt_identity_resolution_tests PROPERTIES
+            VS_GLOBAL_VcpkgEnabled false
+            VS_GLOBAL_VcpkgApplocalDeps false
+        )
+    endif()
+    add_test(NAME openhi2txt_identity_resolution_tests COMMAND openhi2txt_identity_resolution_tests)
 endif()

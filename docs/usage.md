@@ -233,6 +233,76 @@ the caller controls how frequently live results are cached.
 
 ### Planning live watch ranges
 
+For a live MAME session, use the identity reported by MAME rather than deriving
+the definition name in the frontend:
+
+```cpp
+openhi2txt::MameRuntimeIdentity identity{
+    "genesis", "megadriv", "sor2u"
+};
+
+auto plan = context.planGameInputs(identity);
+```
+
+OpenHi2txt resolves this identity through an explicit `<identity>` declaration
+in a definition. The definition filename and public `id` need not be derived
+from any of these three fields. Existing definitions without identity metadata
+retain the compatibility fallback `<machine>_<software>.xml`; machine-only
+launches retain `<machine>.xml`. The same identity overloads are available for
+reading, refreshing, full-buffer decoding, sparse decoding, and input/default
+checks. String overloads remain available when the caller already has an
+explicit definition key.
+
+For example:
+
+```xml
+<!DOCTYPE openhi2txt>
+<openhi2txt requires="0.5.0" id="genesis_tecmobb">
+  <identity type="mame" machine="genesis"
+            software-list="megadriv" software="tecmobb"/>
+  <structure file="sram">
+    <!-- normal hi2txt structure -->
+  </structure>
+  <!-- normal formats, charsets, and output -->
+</openhi2txt>
+```
+
+The frontend supplies facts; it does not choose `genesis_tecmobb`. For static
+software-list NVRAM, `refreshGame(identity)` reads MAME's confirmed path
+`nvram/<machine>/<software>.nv` and presents it to the definition under its
+logical `structure@file` name.
+
+### Complete MAME live client
+
+Applications can let OpenHi2txt own the localhost protocol, reconnection,
+identity negotiation, watch planning, sparse reconstruction, and decoding:
+
+```cpp
+#include <openhi2txt/mame_live.h>
+
+openhi2txt::MameLiveOptions liveOptions;
+liveOptions.expectedIdentity = {"genesis", "megadriv", "sor2u"};
+liveOptions.storageHints.push_back({"sram", 16384});
+
+openhi2txt::MameLiveClient live(
+    context,
+    std::move(liveOptions),
+    [](openhi2txt::MameLiveUpdate update) {
+        // update.result is already decoded into tables.
+        // update.reason distinguishes the initial baseline from later changes.
+    });
+
+live.start();
+// Keep both context and live alive while MAME is running.
+live.stop();
+```
+
+Callbacks run on the client's worker thread. The `Context` passed to the client
+must outlive it; destroy the client from its owning thread, not from inside an
+update callback. The client connects only to `127.0.0.1`, validates payload
+sizes and requested ranges, suppresses duplicate session/sequence snapshots,
+and reconnects automatically when either program starts first or restarts.
+
 Before asking MAME to observe a live source, obtain the conservative watch
 plan derived from the resolved XML definition:
 

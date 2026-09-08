@@ -19,6 +19,9 @@ struct Args {
     std::filesystem::path inputPath;
     std::filesystem::path hiscoreDat;
     std::string game;
+    std::string machine;
+    std::string softwareList;
+    std::string software;
     CliAction action = CliAction::Read;
     bool showLocations = false;
 

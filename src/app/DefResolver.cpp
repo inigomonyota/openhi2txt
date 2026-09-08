@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -112,13 +115,35 @@ void filterStructuresByHiscoreDat(GameDef& def,
     def.structures = std::move(filtered);
 }
 
+std::string definitionCacheKey(const fs::path& definitions,
+                               const fs::path& hiscoreDat,
+                               const std::string& requestedGame) {
+    const auto describePath = [](const fs::path& path) {
+        std::error_code error;
+        const fs::path canonical = fs::weakly_canonical(path, error);
+        const std::string name = (error ? path.lexically_normal() : canonical).string();
+        error.clear();
+        const auto modified = fs::last_write_time(path, error);
+        const auto ticks = error ? 0 : modified.time_since_epoch().count();
+        error.clear();
+        const auto size = fs::is_regular_file(path, error) ? fs::file_size(path, error) : 0;
+        return name + "\x1f" + std::to_string(ticks) + "\x1f" +
+            std::to_string(error ? 0 : size);
+    };
+    std::string lowered = requestedGame;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return describePath(definitions) + "\x1e" + describePath(hiscoreDat) + "\x1e" + lowered;
+}
+
 } // namespace
 
-DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
-                                       const fs::path& mameRoot,
-                                       const std::string& requestedGame,
-                                       const fs::path& hiscoreDatOverride,
-                                       const TraceSink* trace) {
+static DefLoadResult loadFromZipUncached(const fs::path& defsZip,
+                                         const fs::path& mameRoot,
+                                         const std::string& requestedGame,
+                                         const fs::path& hiscoreDatOverride,
+                                         const TraceSink* trace) {
     DefLoadResult res;
 
     const fs::path hiscoreDat = hiscoreDatOverride.empty()
@@ -133,10 +158,9 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
     defCandidates.push_back(requestedGame);
 
     {
-        auto aliases = HiscoreDat::aliasesForGame(hiscoreDat, requestedGame);
-        for (const auto& a : aliases) {
-            if (!Utils::ieq(a, requestedGame))
-                defCandidates.push_back(a);
+        for (const auto& alias : hiscoreBlock.labels) {
+            if (!Utils::ieq(alias, requestedGame))
+                defCandidates.push_back(alias);
         }
     }
 
@@ -230,8 +254,8 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
         if (!parsed.structures.empty() && hasAnyOutput) {
             res.ok = true;
             res.xmlText = std::move(tmp);
+            res.usedDefId = parsed.id.empty() ? cand : parsed.id;
             res.def = std::move(parsed);
-            res.usedDefId = cand;
             return res;
         }
     }
@@ -240,6 +264,37 @@ DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
     res.errorKind = HiScoreErrorKind::DefinitionNotFound;
     res.error = "ERROR: No XML description found for ROM '" + requestedGame + "'";
     return res;
+}
+
+DefLoadResult DefResolver::loadFromZip(const fs::path& defsZip,
+                                       const fs::path& mameRoot,
+                                       const std::string& requestedGame,
+                                       const fs::path& hiscoreDatOverride,
+                                       const TraceSink* trace) {
+    if (trace) {
+        return loadFromZipUncached(
+            defsZip, mameRoot, requestedGame, hiscoreDatOverride, trace);
+    }
+
+    const fs::path hiscoreDat = hiscoreDatOverride.empty()
+        ? (mameRoot / "plugins" / "hiscore" / "hiscore.dat")
+        : hiscoreDatOverride;
+    const std::string key = definitionCacheKey(defsZip, hiscoreDat, requestedGame);
+    static std::mutex cacheMutex;
+    static std::unordered_map<std::string, DefLoadResult> cache;
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto cached = cache.find(key);
+        if (cached != cache.end()) return cached->second;
+    }
+
+    DefLoadResult result = loadFromZipUncached(
+        defsZip, mameRoot, requestedGame, hiscoreDatOverride, nullptr);
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        cache.emplace(key, result);
+    }
+    return result;
 }
 
 } // namespace openhi2txt

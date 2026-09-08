@@ -8,7 +8,10 @@
 #include "io/ArchiveManager.h"
 #include "io/Utils.h"
 #include "xml/EntityMapper.h"
+#include "xml/XmlParser.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -21,6 +24,12 @@
 namespace fs = std::filesystem;
 
 namespace openhi2txt {
+
+std::string mameDefinitionKey(const MameRuntimeIdentity& identity) {
+    if (identity.machine.empty()) return {};
+    if (identity.software.empty()) return identity.machine;
+    return identity.machine + "_" + identity.software;
+}
 
 namespace {
 
@@ -51,6 +60,25 @@ static fs::path resolveInputPath(const fs::path& mameRoot,
     return mameRoot / "hiscore" / (requestedGame + kind);
 }
 
+static std::string softwareBatterySourceKind(const GameDef& def) {
+    std::string selected;
+    for (const auto& structure : def.structures) {
+        const std::string kind = Utils::trim(structure.fileKind.empty() ? ".hi" : structure.fileKind);
+        if (kind.empty() || Utils::ieq(kind, ".hi") || Utils::ieq(kind, "hi") ||
+            Utils::ieq(kind, "dif")) {
+            continue;
+        }
+        if (selected.empty()) selected = kind;
+        else if (!Utils::ieq(selected, kind)) return {};
+    }
+    return selected;
+}
+
+static fs::path softwareBatteryPath(const fs::path& mameRoot,
+                                    const MameRuntimeIdentity& identity) {
+    return mameRoot / "nvram" / identity.machine / (identity.software + ".nv");
+}
+
 static bool hasDifInput(const fs::path& mameRoot, const std::string& requestedGame) {
     const fs::path diffDirectory = mameRoot / "diff";
     if (fs::is_regular_file(diffDirectory / (requestedGame + ".dif"))) return true;
@@ -71,6 +99,12 @@ static std::string toLowerAscii(std::string s) {
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
     }
     return s;
+}
+
+static std::string mameIdentityCacheKey(const MameRuntimeIdentity& identity) {
+    return toLowerAscii(identity.machine) + "\x1f" +
+        toLowerAscii(identity.softwareList) + "\x1f" +
+        toLowerAscii(identity.software);
 }
 
 static std::string nodeText(rapidxml::xml_node<>* n) {
@@ -347,6 +381,135 @@ Context::Context(ContextOptions options)
     : options_(std::move(options)) {
 }
 
+void Context::prepareMameDefinitionIndex() const {
+    std::lock_guard<std::mutex> lock(cacheMutex_);
+    if (identityIndexLoaded_) return;
+
+    std::unordered_map<std::string, std::pair<std::string, std::string>> bindings;
+    std::unordered_map<std::string, std::string> errors;
+    if (!options_.definitionsZip.empty()) {
+        for (const auto& entry : ArchiveManager::extractAllBest(
+                 fs::path(options_.definitionsZip), ".xml")) {
+            XmlParseResult parsed = XmlParser::parseWithDiagnostics(entry.content);
+            if (!parsed.ok || parsed.def.identities.empty()) continue;
+
+            const std::string archiveId = fs::path(entry.basename).stem().string();
+            const std::string definitionId = parsed.def.id.empty() ? archiveId : parsed.def.id;
+            for (const auto& declared : parsed.def.identities) {
+                if (!Utils::ieq(declared.type, "mame")) continue;
+                const std::string key = mameIdentityCacheKey({
+                    declared.machine, declared.softwareList, declared.software
+                });
+                const std::pair<std::string, std::string> binding{archiveId, definitionId};
+                const auto existing = bindings.find(key);
+                if (existing != bindings.end() && existing->second != binding) {
+                    errors[key] = "Multiple OpenHi2txt definitions declare the same MAME identity";
+                    bindings.erase(existing);
+                }
+                else if (errors.find(key) == errors.end()) {
+                    bindings.emplace(key, binding);
+                }
+            }
+        }
+    }
+    identityIndex_ = std::move(bindings);
+    identityIndexErrors_ = std::move(errors);
+    identityIndexLoaded_ = true;
+}
+
+MameDefinitionResolution Context::resolveDefinition(const MameRuntimeIdentity& identity) const {
+    MameDefinitionResolution result;
+    if (identity.machine.empty()) {
+        result.error = "A MAME identity requires a machine name";
+        result.errorKind = HiScoreErrorKind::InvalidData;
+        return result;
+    }
+
+    const std::string requestedKey = mameIdentityCacheKey(identity);
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex_);
+        const auto cached = identityResolutionCache_.find(requestedKey);
+        if (cached != identityResolutionCache_.end()) return cached->second;
+    }
+    const auto cacheResult = [this, &requestedKey](MameDefinitionResolution value) {
+        std::lock_guard<std::mutex> lock(cacheMutex_);
+        identityResolutionCache_[requestedKey] = value;
+        return value;
+    };
+    const auto safeIdentityPart = [](const std::string& value) {
+        return value != "." && value != ".." &&
+            std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+                return std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.';
+            });
+    };
+    if (!safeIdentityPart(identity.machine) || !safeIdentityPart(identity.softwareList) ||
+        !safeIdentityPart(identity.software)) {
+        result.error = "A MAME identity contains an invalid path component";
+        result.errorKind = HiScoreErrorKind::InvalidData;
+        return result;
+    }
+
+    // A normal machine launch has always mapped directly to <machine>.xml.
+    // Keep that path cheap and unchanged; explicit identity metadata exists to
+    // disambiguate software-list launches.
+    if (identity.software.empty() && identity.softwareList.empty()) {
+        result.definitionId = identity.machine;
+        result.definitionEntry = identity.machine;
+        std::string legacyDefinition;
+        if (ArchiveManager::extractBest(
+                fs::path(options_.definitionsZip), result.definitionEntry + ".xml", legacyDefinition)) {
+            result.ok = true;
+            return cacheResult(std::move(result));
+        }
+        result.error = "No OpenHi2txt definition matches MAME machine '" + identity.machine + "'";
+        result.errorKind = HiScoreErrorKind::DefinitionNotFound;
+        result.definitionId.clear();
+        result.definitionEntry.clear();
+        return cacheResult(std::move(result));
+    }
+
+    prepareMameDefinitionIndex();
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex_);
+        const auto error = identityIndexErrors_.find(requestedKey);
+        if (error != identityIndexErrors_.end()) {
+            result.error = error->second;
+            result.errorKind = HiScoreErrorKind::DefinitionInvalid;
+            identityResolutionCache_[requestedKey] = result;
+            return result;
+        }
+        const auto explicitBinding = identityIndex_.find(requestedKey);
+        if (explicitBinding != identityIndex_.end()) {
+            result.ok = true;
+            result.definitionEntry = explicitBinding->second.first;
+            result.definitionId = explicitBinding->second.second;
+            identityResolutionCache_[requestedKey] = result;
+            return result;
+        }
+    }
+
+    // Existing hi2txt definitions have no explicit identity metadata. Keep
+    // their established archive naming rule as a compatibility fallback.
+    result.definitionId = mameDefinitionKey(identity);
+    result.definitionEntry = result.definitionId;
+    if (result.definitionId.empty()) {
+        result.error = "Unable to derive a legacy definition key from the MAME identity";
+        result.errorKind = HiScoreErrorKind::DefinitionNotFound;
+        return cacheResult(std::move(result));
+    }
+    std::string legacyDefinition;
+    if (!ArchiveManager::extractBest(
+            fs::path(options_.definitionsZip), result.definitionEntry + ".xml", legacyDefinition)) {
+        result.error = "No OpenHi2txt definition matches the supplied MAME identity";
+        result.errorKind = HiScoreErrorKind::DefinitionNotFound;
+        result.definitionId.clear();
+        result.definitionEntry.clear();
+        return cacheResult(std::move(result));
+    }
+    result.ok = true;
+    return cacheResult(std::move(result));
+}
+
 std::vector<std::string> Context::listGames() const {
     if (options_.definitionsZip.empty()) return {};
     return xmlBasenamesToGameNames(ArchiveManager::listBasenames(fs::path(options_.definitionsZip), ".xml"));
@@ -437,6 +600,18 @@ HiScoreResult Context::readGame(const std::string& gameName,
     result.errorKind = HiScoreErrorKind::ScoreXmlNotFound;
     result.source = ScoreSource::None;
     return result;
+}
+
+HiScoreResult Context::readGame(const MameRuntimeIdentity& identity,
+                                const ReadOptions& readOptions) const {
+    const auto resolved = resolveDefinition(identity);
+    if (!resolved.ok) {
+        HiScoreResult result;
+        result.error = resolved.error;
+        result.errorKind = resolved.errorKind;
+        return result;
+    }
+    return readGame(resolved.definitionId, readOptions);
 }
 
 std::unordered_map<std::string, HiScoreResult> Context::readAllPersistedGames(
@@ -548,6 +723,83 @@ HiScoreResult Context::refreshGame(const std::string& gameName,
     return result;
 }
 
+HiScoreResult Context::refreshGame(const MameRuntimeIdentity& identity,
+                                   const ReadOptions& readOptions) const {
+    const auto resolved = resolveDefinition(identity);
+    if (!resolved.ok) {
+        HiScoreResult result;
+        result.error = resolved.error;
+        result.errorKind = resolved.errorKind;
+        return result;
+    }
+
+    auto defRes = DefResolver::loadFromZip(
+        fs::path(options_.definitionsZip), fs::path(options_.mameRoot), resolved.definitionEntry);
+    if (!defRes.ok) {
+        HiScoreResult result;
+        result.game = resolved.definitionId;
+        result.error = defRes.error;
+        result.errorKind = defRes.errorKind;
+        return result;
+    }
+
+    InputProcessResult inRes;
+    const std::string batteryKind = identity.software.empty()
+        ? std::string()
+        : softwareBatterySourceKind(defRes.def);
+    const fs::path batteryPath = softwareBatteryPath(fs::path(options_.mameRoot), identity);
+    if (!batteryKind.empty() && fs::is_regular_file(batteryPath)) {
+        std::string bytes;
+        if (!readWholeFile(batteryPath, bytes)) {
+            HiScoreResult result;
+            result.game = resolved.definitionId;
+            result.error = "Unable to read MAME software battery input " + batteryPath.string();
+            result.errorKind = HiScoreErrorKind::InputNotFound;
+            return result;
+        }
+        HiScoreInput input;
+        input.fileKind = batteryKind;
+        input.bytes.assign(bytes.begin(), bytes.end());
+        input.sourceName = batteryPath.string();
+        inRes = InputProcessor::processBuffers(defRes.def, {std::move(input)});
+    }
+    else {
+        inRes = InputProcessor::process(
+            fs::path(options_.mameRoot), resolved.definitionId, defRes.def);
+    }
+
+    if (!inRes.ok) {
+        HiScoreResult result;
+        result.game = resolved.definitionId;
+        result.error = inRes.error;
+        result.errorKind = inRes.errorKind;
+        result.usedDefinition = defRes.usedDefId;
+        return result;
+    }
+
+    HiScoreResult result = ResultRenderer::render(defRes.def, inRes.rows, inRes.outputId, readOptions);
+    result.game = resolved.definitionId;
+    result.usedDefinition = defRes.usedDefId;
+    result.usedInputPath = inRes.inputPath.string();
+    result.source = ScoreSource::RealInput;
+
+    if (!options_.scoresDirectory.empty()) {
+        std::string cacheXml = renderResultXml(result);
+        std::string encodeError;
+        if (decodeXmlWithOptions(options_.scoreCache, "Score cache", cacheXml, encodeError)) {
+            std::string writeError;
+            if (!writeWholeFileIfChanged(
+                    scoreCachePath(options_, resolved.definitionId), cacheXml, writeError)) {
+                result.warnings.push_back(writeError);
+            }
+        }
+        else {
+            result.warnings.push_back(encodeError);
+        }
+    }
+    return result;
+}
+
 HiScoreResult Context::decodeGame(const std::string& gameName,
                                   const std::vector<HiScoreInput>& inputs,
                                   const ReadOptions& readOptions) const {
@@ -581,6 +833,21 @@ HiScoreResult Context::decodeGame(const std::string& gameName,
     return result;
 }
 
+HiScoreResult Context::decodeGame(const MameRuntimeIdentity& identity,
+                                  const std::vector<HiScoreInput>& inputs,
+                                  const ReadOptions& readOptions) const {
+    const auto resolved = resolveDefinition(identity);
+    if (!resolved.ok) {
+        HiScoreResult result;
+        result.error = resolved.error;
+        result.errorKind = resolved.errorKind;
+        return result;
+    }
+    HiScoreResult result = decodeGame(resolved.definitionEntry, inputs, readOptions);
+    result.game = resolved.definitionId;
+    return result;
+}
+
 HiScoreResult Context::decodeSparseGame(const std::string& gameName,
                                         const std::vector<HiScoreSparseInput>& inputs,
                                         const ReadOptions& readOptions) const {
@@ -593,6 +860,19 @@ HiScoreResult Context::decodeSparseGame(const std::string& gameName,
         return result;
     }
     return decodeGame(gameName, materialized.inputs, readOptions);
+}
+
+HiScoreResult Context::decodeSparseGame(const MameRuntimeIdentity& identity,
+                                        const std::vector<HiScoreSparseInput>& inputs,
+                                        const ReadOptions& readOptions) const {
+    auto materialized = SparseInput::materialize(inputs);
+    if (!materialized.ok) {
+        HiScoreResult result;
+        result.error = materialized.error;
+        result.errorKind = HiScoreErrorKind::InvalidData;
+        return result;
+    }
+    return decodeGame(identity, materialized.inputs, readOptions);
 }
 
 HiScoreInputPlanResult Context::planGameInputs(const std::string& gameName) const {
@@ -613,6 +893,19 @@ HiScoreInputPlanResult Context::planGameInputs(const std::string& gameName) cons
     return result;
 }
 
+HiScoreInputPlanResult Context::planGameInputs(const MameRuntimeIdentity& identity) const {
+    const auto resolved = resolveDefinition(identity);
+    if (!resolved.ok) {
+        HiScoreInputPlanResult result;
+        result.error = resolved.error;
+        result.errorKind = resolved.errorKind;
+        return result;
+    }
+    HiScoreInputPlanResult result = planGameInputs(resolved.definitionEntry);
+    result.game = resolved.definitionId;
+    return result;
+}
+
 bool Context::hasInputForGame(const std::string& gameName) const {
     auto defRes = DefResolver::loadFromZip(fs::path(options_.definitionsZip), fs::path(options_.mameRoot), gameName);
     if (!defRes.ok) return false;
@@ -624,6 +917,21 @@ bool Context::hasInputForGame(const std::string& gameName) const {
     }
 
     return false;
+}
+
+bool Context::hasInputForGame(const MameRuntimeIdentity& identity) const {
+    const auto resolved = resolveDefinition(identity);
+    if (!resolved.ok) return false;
+
+    auto defRes = DefResolver::loadFromZip(
+        fs::path(options_.definitionsZip), fs::path(options_.mameRoot), resolved.definitionEntry);
+    if (!defRes.ok) return false;
+
+    if (!identity.software.empty() && !softwareBatterySourceKind(defRes.def).empty() &&
+        fs::is_regular_file(softwareBatteryPath(fs::path(options_.mameRoot), identity))) {
+        return true;
+    }
+    return hasInputForGame(resolved.definitionId);
 }
 
 bool Context::hasDefaultForGame(const std::string& gameName) const {
@@ -643,6 +951,11 @@ bool Context::hasDefaultForGame(const std::string& gameName) const {
         defaultMisses_.insert(cacheKey);
     }
     return found;
+}
+
+bool Context::hasDefaultForGame(const MameRuntimeIdentity& identity) const {
+    const auto resolved = resolveDefinition(identity);
+    return resolved.ok && hasDefaultForGame(resolved.definitionId);
 }
 
 } // namespace openhi2txt
