@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: windows-x64
+            os: windows-2022
+          - name: macos-arm64
+            os: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libminizip-dev zlib1g-dev ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install minizip ninja
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOPENHI2TXT_BUILD_CLI=ON
+          -DBUILD_TESTING=ON
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          MINIZIP_PREFIX="$(brew --prefix minizip)"
+          ZLIB_PREFIX="$(brew --prefix zlib)"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENHI2TXT_BUILD_CLI=ON \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_PREFIX_PATH="${MINIZIP_PREFIX};${ZLIB_PREFIX}" \
+            -DMINIZIP_INCLUDE_DIR="${MINIZIP_PREFIX}/include" \
+            -DMINIZIP_LIBRARY="${MINIZIP_PREFIX}/lib/libminizip.dylib"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build -A x64
+          -DOPENHI2TXT_BUILD_CLI=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Run unit tests
+        run: ctest --test-dir build -C Release --output-on-failure

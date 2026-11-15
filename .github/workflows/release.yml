@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag name (e.g. v0.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & test (windows-x64)
+    runs-on: windows-2022
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -A x64
+          -DOPENHI2TXT_BUILD_CLI=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Run unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage Windows CLI and library archives
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force dist/cli, dist/lib/lib, dist/lib/include | Out-Null
+
+          # Standalone CLI archive
+          Copy-Item build/Release/bin/openhi2txt.exe dist/cli/
+          Copy-Item README.md, LICENSE.txt, THIRD_PARTY_NOTICES.md dist/cli/
+          Compress-Archive -Path dist/cli/* -DestinationPath "dist/openhi2txt-${env:TAG_NAME}-windows-x64.zip" -Force
+
+          # Static library + headers archive
+          Copy-Item build/Release/lib/openhi2txt.lib dist/lib/lib/
+          Get-ChildItem build/thirdparty/libchdr -Recurse -Filter *.lib | Copy-Item -Destination dist/lib/lib/
+          Copy-Item thirdparty/zlib-static/lib/msvc-x64-md/*.lib dist/lib/lib/
+          Copy-Item include/* dist/lib/include/ -Recurse -Force
+          Copy-Item build/generated/include/* dist/lib/include/ -Recurse -Force
+          Copy-Item README.md, LICENSE.txt, THIRD_PARTY_NOTICES.md dist/lib/
+          Compress-Archive -Path dist/lib/* -DestinationPath "dist/openhi2txt-${env:TAG_NAME}-windows-x64-lib.zip" -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: dist/openhi2txt-*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" artifacts/* --clobber
+          else
+            gh release create "$TAG_NAME" artifacts/* \
+              --target "${{ github.sha }}" \
+              --title "openhi2txt $TAG_NAME" \
+              --generate-notes
+          fi
