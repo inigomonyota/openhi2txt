@@ -503,3 +503,21 @@ paths used, XML loading, structure matching, bytes consumed by each structure
 element, selected output, and displayed fields. `-rd` also enables trace.
 `-notrace` disables trace again. Trace is a CLI feature and is not exposed in
 the public library API.
+
+## Filesystem-backed score inputs (0.6.0)
+
+`refreshGame()` can resolve ext2 paths inside a DIF-backed logical disk. Definitions
+use `structure file="dif" filesystem="ext2" partition="1"` with nested `source`
+elements (see the XML reference and `examples/carnking.xml`). This avoids stale
+offsets when a save relocates its files. Each refresh opens the disk read-only and
+resolves current directory entries and inode block pointers. Source failures do
+not persist partial results.
+
+`planGameInputs()`, `decodeGame()` and `decodeSparseGame()` currently reject
+filesystem definitions with an explicit error. Static live watch ranges cannot
+represent changing file allocations. Use file-backed refresh after game exit.
+
+Filesystem implementations share `FilesystemReader::readFile()` and receive a
+bounded logical-disk read callback. New filesystem types can be added behind the
+factory without changing the CHD reader or score-record decoder; extend XML
+validation alongside the factory when adding a type.

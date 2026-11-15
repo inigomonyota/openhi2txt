@@ -889,7 +889,12 @@ HiScoreInputPlanResult Context::planGameInputs(const std::string& gameName) cons
 
     result.ok = true;
     result.usedDefinition = defRes.usedDefId;
-    result.inputs = InputPlanner::plan(defRes.def);
+    try { result.inputs = InputPlanner::plan(defRes.def); }
+    catch (const std::exception& e) {
+        result.ok = false;
+        result.errorKind = HiScoreErrorKind::InvalidData;
+        result.error = e.what();
+    }
     return result;
 }
 

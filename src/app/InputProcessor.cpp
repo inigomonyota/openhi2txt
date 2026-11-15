@@ -3,6 +3,7 @@
 #include "core/StructureSelector.h"
 #include "core/Trace.h"
 #include "io/ChdReader.h"
+#include "io/FilesystemReader.h"
 #include "io/Utils.h"
 
 #include <algorithm>
@@ -261,6 +262,38 @@ InputProcessResult InputProcessor::process(const fs::path& mameRoot,
                 openOverlayPath = p;
             }
 
+            if (!s.filesystem.empty()) {
+                std::string error;
+                auto filesystem = FilesystemReader::open(s.filesystem, s.partition,
+                    chdReader->logicalSize(), [&](uint64_t offset, size_t count,
+                        std::vector<uint8_t>& bytes, std::string& message) {
+                        return chdReader->read(offset, count, bytes, message);
+                    }, error);
+                InputProcessResult candidate;
+                bool matched = bool(filesystem);
+                if (filesystem) for (const auto& source : s.sources) {
+                    if (!filesystem->readFile(source.fileKind, raw, error)) { matched = false; break; }
+                    auto status = processRawStructure(candidate, raw, source, def,
+                        p.string() + ":" + source.fileKind, trace);
+                    if (status != RawProcessStatus::Processed) {
+                        error = candidate.error.empty() ? "Filesystem source check failed: " + source.fileKind : candidate.error;
+                        matched = false; break;
+                    }
+                }
+                if (!matched) {
+                    // Never publish a partially decoded set of filesystem files.
+                    res.ok = false;
+                    res.rows.clear();
+                    res.errorKind = HiScoreErrorKind::InvalidData;
+                    res.error = error;
+                    return res;
+                }
+                if (res.inputPath.empty()) { res.inputPath = p; res.outputId = s.outputId; }
+                mergeRows(res.rows, candidate.rows);
+                res.ok = true;
+                continue;
+            }
+
             if (!s.hasInputWindow || s.inputLength > std::numeric_limits<size_t>::max()) {
                 res.errorKind = HiScoreErrorKind::InvalidData;
                 res.error = "The DIF structure has an invalid input window";
@@ -304,6 +337,13 @@ InputProcessResult InputProcessor::processBuffers(const GameDef& def,
     bool foundInput = false;
 
     for (const auto& s : def.structures) {
+        if (!s.filesystem.empty()) {
+            res.ok = false;
+            res.rows.clear();
+            res.errorKind = HiScoreErrorKind::InvalidData;
+            res.error = "Filesystem definitions require file-backed refresh; fixed input buffers are unsupported.";
+            return res;
+        }
         const std::string structureKind = canonicalFileKind(s.fileKind);
         const auto found = std::find_if(inputs.begin(), inputs.end(),
             [&](const HiScoreInput& input) {

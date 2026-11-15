@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "core/InputPlanner.h"
 
 #include "io/Utils.h"
@@ -247,6 +248,8 @@ static void expandForStructureSwap(std::vector<Range>& ranges, int byteSwap,
 
 static HiScoreInputPlan planStructure(const GameDef& def, const Structure& structure,
                                       size_t structureIndex) {
+    if (!structure.filesystem.empty())
+        throw std::runtime_error("Filesystem definitions require file-backed refresh; static live ranges are unsupported.");
     HiScoreInputPlan plan;
     plan.structureIndex = structureIndex;
     plan.fileKind = Utils::trim(structure.fileKind.empty() ? ".hi" : structure.fileKind);

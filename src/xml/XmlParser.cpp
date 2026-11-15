@@ -1,4 +1,5 @@
 #include "xml/XmlParser.h"
+#include <functional>
 #include "xml/EntityMapper.h"
 #include "io/Utils.h"
 #include "openhi2txt/openhi2txt.h"
@@ -86,6 +87,7 @@ namespace openhi2txt {
 			{ "openhi2txt", { "requires", "id", "label", "ingame-score" } },
 			{ "identity", { "type", "machine", "software-list", "software" } },
 			{ "structure", { "file", "output", "byte-swap" } },
+			{ "source", { "file", "byte-swap" } },
 			{ "decode", { "type", "offset", "size" } },
 			{ "check", {} },
 			{ "definition", { "offset" } },
@@ -142,7 +144,7 @@ namespace openhi2txt {
 
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& openExtensionAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
-			{ "structure", { "offset", "length" } },
+			{ "structure", { "offset", "length", "filesystem", "partition" } },
 			{ "loop", { "stop-when" } },
 			{ "table", { "show-empty" } },
 			{ "column", { "source-row", "header" } },
@@ -162,7 +164,8 @@ namespace openhi2txt {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
 			{ "openhi2txt", { "identity", "structure", "bitmask", "output", "format", "charset", "sameas" } },
-			{ "structure", { "check", "decode", "elt", "loop" } },
+			{ "structure", { "check", "decode", "elt", "loop", "source" } },
+			{ "source", { "check", "decode", "elt", "loop" } },
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
 			{ "output", { "table", "field" } },
@@ -266,7 +269,7 @@ namespace openhi2txt {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
-		if ((name == "identity" || name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
+		if ((name == "source" || name == "identity" || name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
 			error = "The element '" + name +
 				"' is an openhi2txt extension and requires the 'openhi2txt' root.";
 			return false;
@@ -372,8 +375,41 @@ namespace openhi2txt {
 			}
 		}
 
+        if (name == "source") {
+            const std::string path = attr(n, "file");
+            if (!n->parent() || attr(n->parent(), "filesystem").empty() ||
+                path.size() < 2 || path.front() != '/' || path.back() == '/' ||
+                path.find('\\') != std::string::npos || path.find("//") != std::string::npos ||
+                path.find("/../") != std::string::npos || path.find("/./") != std::string::npos ||
+                path.substr(path.size()-2) == "/." ||
+                (path.size() >= 3 && path.substr(path.size()-3) == "/..")) {
+                error = "A source requires an absolute filesystem file path inside a filesystem structure.";
+                return false;
+            }
+        }
+
 		if (name == "structure") {
 			const bool isDif = ieq(attr(n, "file"), "dif");
+            const bool filesystem = n->first_attribute("filesystem") != nullptr;
+            if (filesystem) {
+                uint64_t partition = 0;
+                if (!isDif || attr(n, "filesystem") != "ext2" ||
+                    !parseUint64(attr(n, "partition"), partition) || partition < 1 || partition > 4 ||
+                    n->first_attribute("offset") || n->first_attribute("length") ||
+                    n->first_attribute("byte-swap") || !n->first_node("source")) {
+                    error = "A filesystem structure requires file='dif', filesystem='ext2', partition 1..4 and sources, without offset/length/byte-swap.";
+                    return false;
+                }
+                for (auto* c = n->first_node(); c; c = c->next_sibling()) {
+                    if (c->type() == rapidxml::node_element && std::string(c->name()) != "source") {
+                        error = "Filesystem structure decoding and checks belong inside source elements.";
+                        return false;
+                    }
+                }
+            } else if (n->first_attribute("partition") || n->first_node("source")) {
+                error = "Partition and sources require a filesystem structure.";
+                return false;
+            }
 			const bool hasOffset = n->first_attribute("offset") != nullptr;
 			const bool hasLength = n->first_attribute("length") != nullptr;
 			if (isDif && !allowOpenExtensions) {
@@ -384,11 +420,11 @@ namespace openhi2txt {
 				error = "The structure offset and length attributes are only supported with file='dif'.";
 				return false;
 			}
-			if (isDif && (!hasOffset || !hasLength)) {
+			if (isDif && !filesystem && (!hasOffset || !hasLength)) {
 				error = "A structure using file='dif' requires both offset and length attributes.";
 				return false;
 			}
-			if (isDif) {
+			if (isDif && !filesystem) {
 				uint64_t offset = 0;
 				uint64_t length = 0;
 				if (!parseUint64(attr(n, "offset"), offset)) {
@@ -1270,9 +1306,15 @@ namespace openhi2txt {
 				}
 			}
 			else if (ieq(nm, "structure")) {
+                std::function<Structure(rapidxml::xml_node<>*)> parseStructure;
+                parseStructure = [&](rapidxml::xml_node<>* n) -> Structure {
 				Structure s;
+                s.filesystem = attr(n, "filesystem");
+                uint64_t partition = 0;
+                parseUint64(attr(n, "partition"), partition);
+                s.partition = static_cast<unsigned>(partition);
 				s.fileKind = attr(n, "file");
-				if (ieq(s.fileKind, "dif")) {
+				if (ieq(s.fileKind, "dif") && s.filesystem.empty()) {
 					s.hasInputWindow = true;
 					parseUint64(attr(n, "offset"), s.inputOffset);
 					parseUint64(attr(n, "length"), s.inputLength);
@@ -1533,6 +1575,11 @@ namespace openhi2txt {
 					}
 				}
 
+                for (auto* child = n->first_node("source"); child; child = child->next_sibling("source"))
+                    s.sources.push_back(parseStructure(child));
+                return s;
+                };
+                Structure s = parseStructure(n);
 				def.structures.push_back(std::move(s));
 			}
 			else if (ieq(nm, "output")) {

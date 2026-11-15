@@ -160,3 +160,11 @@ Third-party notes:
 - Linux expects zlib/minizip from the system or explicit CMake paths.
 - Dependency licenses and source details are listed in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Filesystem-backed scores (0.6.0)
+
+Read-only ext2 path lookup is available for DIF-backed scores that relocate on
+save. [Carnival King's definition](examples/carnking.xml) uses named score files
+instead of fixed offsets. Existing raw-offset definitions remain supported.
+See the [XML reference](docs/xml-reference.md#filesystem-sources-openhi2txt-060)
+for syntax, supported ext2 features, and the file-backed-refresh requirement.

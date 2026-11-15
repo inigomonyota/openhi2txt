@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(openhi2txt
-    VERSION 0.5.0
+    VERSION 0.6.0
     LANGUAGES CXX
 )
 
@@ -34,6 +34,7 @@ add_library(openhi2txt STATIC
     src/core/SparseInput.cpp
     src/core/StructureSelector.cpp
     src/io/ArchiveManager.cpp
+    src/io/FilesystemReader.cpp
     src/io/ChdReader.cpp
     src/io/HiscoreDat.cpp
     src/io/Utils.cpp
@@ -146,6 +147,10 @@ function(openhi2txt_add_libchdr)
 endfunction()
 openhi2txt_add_libchdr()
 target_link_libraries(openhi2txt PRIVATE chdr-static)
+if(WIN32 AND MSVC)
+    set_target_properties(chdr-static PROPERTIES VS_GLOBAL_VcpkgEnabled false VS_GLOBAL_VcpkgApplocalDeps false)
+    target_compile_definitions(chdr-static PRIVATE ZLIB_STATIC)
+endif()
 
 if(MSVC)
     # The bundled static zlib uses zs.lib. Some transitive objects carry the
@@ -253,4 +258,14 @@ if(BUILD_TESTING)
         )
     endif()
     add_test(NAME openhi2txt_identity_resolution_tests COMMAND openhi2txt_identity_resolution_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(openhi2txt_filesystem_tests tests/FilesystemTests.cpp)
+    target_link_libraries(openhi2txt_filesystem_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_filesystem_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_filesystem_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+        VS_GLOBAL_VcpkgEnabled false VS_GLOBAL_VcpkgApplocalDeps false)
+    add_test(NAME openhi2txt_filesystem_tests COMMAND openhi2txt_filesystem_tests)
 endif()

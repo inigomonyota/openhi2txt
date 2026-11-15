@@ -195,8 +195,9 @@ MAME short name of the target definition.
 
 ## Structures
 
-A `structure` describes one possible binary layout. OpenHi2txt tries structures
-in document order and uses the first one whose file and checks match.
+A `structure` describes a binary input layout. OpenHi2txt processes structures
+in document order and merges matching rows by field ID. The first successfully
+decoded structure selects the output.
 
 ```xml
 <structure file=".hi" output="DEFAULT" byte-swap="2">
@@ -260,6 +261,52 @@ is not stable as additional disk blocks are written.
 
 `file="dif"`, structure `offset`, and structure `length` are rejected under the
 legacy `hi2txt` root.
+
+### Filesystem sources (OpenHi2txt 0.6.0)
+
+Use a filesystem structure when saved files can move between disk blocks:
+
+```xml
+<structure file="dif" filesystem="ext2" partition="1">
+  <source file="/hiscore/ko_higame.dat">
+    <check><size>48</size></check>
+    <loop count="3">
+      <elt id="NAME" type="text" size="4"/>
+      <elt id="SCORE" type="int" size="4" endianness="little_endian"/>
+      <elt id="META" type="raw" size="8"/>
+    </loop>
+  </source>
+</structure>
+```
+
+`partition` selects primary MBR entry 1 through 4 (one-based; decimal or hex).
+`filesystem="ext2"` selects the read-only filesystem implementation. The usual
+DIF lookup and parent identity rules still apply, including requiring a DIF.
+`offset`, `length`, and structure `byte-swap` cannot be combined with filesystem
+mode. Filesystem structures contain one or more `source` elements only.
+
+Each `source@file` is an absolute, case-sensitive path within that filesystem,
+not a host path. Empty components, `.` and `..`, backslashes, and symlinks are
+unsupported. Each source supports the existing `check`, `decode`, `elt`, `loop`,
+and `byte-swap` behavior. Its cursor starts at zero; element offsets, byte
+checks, and decode regions address bytes within that file. Size checks measure
+the extracted file. Source results merge by row and field ID into the enclosing
+structure's selected output. Use distinct field IDs across sources. All sources
+must be read and decoded successfully; failures return an error without partial
+results or a new persisted score cache.
+
+The ext2 reader supports revisions 0 and 1, 1/2/4 KiB blocks, direct and indirect
+block pointers, sparse files, and linear directories. It also recognizes the
+validated inverted revision-0 superblock used by Carnival King, where some
+inode flags contain a copy of the inode change timestamp. Files and directories
+are limited to 16 MiB each. Unsupported feature flags, journaled filesystems,
+extents, indexed directories, and invalid bounds fail explicitly.
+
+Filesystem reads are available through file-backed CLI reads and `refreshGame`.
+Static live range planning and buffer/sparse decoding reject these definitions:
+watching changing filesystem metadata needs a separate dynamic planning layer.
+Each refresh resolves the file paths again. Existing raw DIF windows are unchanged.
+See `examples/carnking.xml` for multiple sources feeding existing output tables.
 
 ### Structure decode regions (OpenHi2txt 0.4.0)
 

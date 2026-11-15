@@ -216,6 +216,9 @@ struct DecodeRegion {
 };
 
 struct Structure {
+    std::string filesystem;
+    unsigned partition = 0;
+    std::vector<Structure> sources;
     std::string fileKind = ".hi";
     uint64_t inputOffset = 0;
     uint64_t inputLength = 0;

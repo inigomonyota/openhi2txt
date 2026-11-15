@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<openhi2txt requires="0.6.0" label="Carnival King">
+
+  <structure file="dif" filesystem="ext2" partition="1">
+    <source file="/hiscore/sr_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="DROBOT_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="DROBOT_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_DROBOT_META1"/>
+        <elt size="4" type="raw" id="_DROBOT_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/mh_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="LMOUSE_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="LMOUSE_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_LMOUSE_META1"/>
+        <elt size="4" type="raw" id="_LMOUSE_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/bc_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="LBULL_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="LBULL_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_LBULL_META1"/>
+        <elt size="4" type="raw" id="_LBULL_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/am_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="LANIMAL_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="LANIMAL_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_LANIMAL_META1"/>
+        <elt size="4" type="raw" id="_LANIMAL_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/qd_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="LQUICK_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="LQUICK_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_LQUICK_META1"/>
+        <elt size="4" type="raw" id="_LQUICK_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/hirack2.dat">
+      <check><size>176</size></check>
+      <loop count="11">
+        <elt size="4" type="text" id="LAGOON_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="LAGOON_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_LAGOON_META1"/>
+        <elt size="4" type="raw" id="_LAGOON_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/sg_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="ASHOOT_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="ASHOOT_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_ASHOOT_META1"/>
+        <elt size="4" type="raw" id="_ASHOOT_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/cb_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="ACLUSTER_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="ACLUSTER_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_ACLUSTER_META1"/>
+        <elt size="4" type="raw" id="_ACLUSTER_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/ss_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="ASTAR_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="ASTAR_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_ASTAR_META1"/>
+        <elt size="4" type="raw" id="_ASTAR_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/sash_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="DSALOON_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="DSALOON_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_DSALOON_META1"/>
+        <elt size="4" type="raw" id="_DSALOON_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/hirack0.dat">
+      <check><size>176</size></check>
+      <loop count="11">
+        <elt size="4" type="text" id="ARCADIA_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="ARCADIA_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_ARCADIA_META1"/>
+        <elt size="4" type="raw" id="_ARCADIA_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/ko_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="AKNOCK_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="AKNOCK_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_AKNOCK_META1"/>
+        <elt size="4" type="raw" id="_AKNOCK_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/hh_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="DHAUNT_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="DHAUNT_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_DHAUNT_META1"/>
+        <elt size="4" type="raw" id="_DHAUNT_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/hirack1.dat">
+      <check><size>176</size></check>
+      <loop count="11">
+        <elt size="4" type="text" id="DREAMLAND_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="DREAMLAND_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_DREAMLAND_META1"/>
+        <elt size="4" type="raw" id="_DREAMLAND_META2"/>
+      </loop>
+    </source>
+    <source file="/hiscore/bw_higame.dat">
+      <check><size>48</size></check>
+      <loop count="3">
+        <elt size="4" type="text" id="DBALLOON_NAME" charset="ascii_name"/>
+        <elt size="4" type="int" id="DBALLOON_SCORE" endianness="little_endian"/>
+        <elt size="4" type="raw" id="_DBALLOON_META1"/>
+        <elt size="4" type="raw" id="_DBALLOON_META2"/>
+      </loop>
+    </source>
+  </structure>
+
+  <output>
+    <table id="ARCADIA HIGH SCORES" lines-max="11">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="ARCADIA_SCORE" format="comma_score"/>
+      <column id="NAME" src="ARCADIA_NAME"/>
+    </table>
+    <table id="DREAMLAND HIGH SCORES" lines-max="11">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="DREAMLAND_SCORE" format="comma_score"/>
+      <column id="NAME" src="DREAMLAND_NAME"/>
+    </table>
+    <table id="LAGOON PARK HIGH SCORES" lines-max="11">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="LAGOON_SCORE" format="comma_score"/>
+      <column id="NAME" src="LAGOON_NAME"/>
+    </table>
+    <table id="ARCADIA - KNOCK 'EM OVER" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="AKNOCK_SCORE" format="comma_score"/>
+      <column id="NAME" src="AKNOCK_NAME"/>
+    </table>
+    <table id="ARCADIA - SHOOTING GALLERY" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="ASHOOT_SCORE" format="comma_score"/>
+      <column id="NAME" src="ASHOOT_NAME"/>
+    </table>
+    <table id="ARCADIA - CLUSTER BUSTER" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="ACLUSTER_SCORE" format="comma_score"/>
+      <column id="NAME" src="ACLUSTER_NAME"/>
+    </table>
+    <table id="ARCADIA - SHOOT THE STAR" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="ASTAR_SCORE" format="comma_score"/>
+      <column id="NAME" src="ASTAR_NAME"/>
+    </table>
+    <table id="DREAMLAND - SALOON SHOOT" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="DSALOON_SCORE" format="comma_score"/>
+      <column id="NAME" src="DSALOON_NAME"/>
+    </table>
+    <table id="DREAMLAND - HAUNTED HUNT" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="DHAUNT_SCORE" format="comma_score"/>
+      <column id="NAME" src="DHAUNT_NAME"/>
+    </table>
+    <table id="DREAMLAND - BALLOON WHEEL" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="DBALLOON_SCORE" format="comma_score"/>
+      <column id="NAME" src="DBALLOON_NAME"/>
+    </table>
+    <table id="DREAMLAND - STOP THE ROBOT" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="DROBOT_SCORE" format="comma_score"/>
+      <column id="NAME" src="DROBOT_NAME"/>
+    </table>
+    <table id="LAGOON PARK - MOUSE HUNT" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="LMOUSE_SCORE" format="comma_score"/>
+      <column id="NAME" src="LMOUSE_NAME"/>
+    </table>
+    <table id="LAGOON PARK - BULLSEYE CANYON" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="LBULL_SCORE" format="comma_score"/>
+      <column id="NAME" src="LBULL_NAME"/>
+    </table>
+    <table id="LAGOON PARK - ANIMAL MATCH" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="LANIMAL_SCORE" format="comma_score"/>
+      <column id="NAME" src="LANIMAL_NAME"/>
+    </table>
+    <table id="LAGOON PARK - QUICK DRAW" lines-max="3">
+      <column id="RANK" src="index" format="rank"/>
+      <column id="SCORE" src="LQUICK_SCORE" format="comma_score"/>
+      <column id="NAME" src="LQUICK_NAME"/>
+    </table>
+  </output>
+
+  <format id="rank">
+    <case src="0" dst="1."/>
+    <case src="1" dst="2."/>
+    <case src="2" dst="3."/>
+    <case src="3" dst="4."/>
+    <case src="4" dst="5."/>
+    <case src="5" dst="6."/>
+    <case src="6" dst="7."/>
+    <case src="7" dst="8."/>
+    <case src="8" dst="9."/>
+    <case src="9" dst="10."/>
+    <case src="10" dst="11."/>
+  </format>
+
+  <format id="comma_score">
+    <case src="1000000000" operator="&gt;=" format="three_commas"/>
+    <case src="1000000" operator="&gt;=" format="two_commas"/>
+    <case src="1000" operator="&gt;=" format="one_comma"/>
+    <case src="1000" operator="&lt;" format="*1" default="yes"/>
+  </format>
+
+  <format id="three_commas" input-as-subcolumns-input="yes">
+    <concat>
+      <column format="d1000000000"/>
+      <txt>,</txt>
+      <column format="%1000000000;d1000000;PadL30"/>
+      <txt>,</txt>
+      <column format="%1000000;d1000;PadL30"/>
+      <txt>,</txt>
+      <column format="%1000;PadL30"/>
+    </concat>
+  </format>
+
+  <format id="two_commas" input-as-subcolumns-input="yes">
+    <concat>
+      <column format="d1000000"/>
+      <txt>,</txt>
+      <column format="%1000000;d1000;PadL30"/>
+      <txt>,</txt>
+      <column format="%1000;PadL30"/>
+    </concat>
+  </format>
+
+  <format id="one_comma" input-as-subcolumns-input="yes">
+    <concat>
+      <column format="d1000"/>
+      <txt>,</txt>
+      <column format="%1000;PadL30"/>
+    </concat>
+  </format>
+
+  <charset id="ascii_name">
+    <char src="0x00" dst=""/>
+    <char src="0x20" dst=" "/>
+    <char src="0x30" dst="0"/><char src="0x31" dst="1"/><char src="0x32" dst="2"/>
+    <char src="0x33" dst="3"/><char src="0x34" dst="4"/><char src="0x35" dst="5"/>
+    <char src="0x36" dst="6"/><char src="0x37" dst="7"/><char src="0x38" dst="8"/>
+    <char src="0x39" dst="9"/>
+    <char src="0x41" dst="A"/><char src="0x42" dst="B"/><char src="0x43" dst="C"/>
+    <char src="0x44" dst="D"/><char src="0x45" dst="E"/><char src="0x46" dst="F"/>
+    <char src="0x47" dst="G"/><char src="0x48" dst="H"/><char src="0x49" dst="I"/>
+    <char src="0x4A" dst="J"/><char src="0x4B" dst="K"/><char src="0x4C" dst="L"/>
+    <char src="0x4D" dst="M"/><char src="0x4E" dst="N"/><char src="0x4F" dst="O"/>
+    <char src="0x50" dst="P"/><char src="0x51" dst="Q"/><char src="0x52" dst="R"/>
+    <char src="0x53" dst="S"/><char src="0x54" dst="T"/><char src="0x55" dst="U"/>
+    <char src="0x56" dst="V"/><char src="0x57" dst="W"/><char src="0x58" dst="X"/>
+    <char src="0x59" dst="Y"/><char src="0x5A" dst="Z"/>
+  </charset>
+
+</openhi2txt>
