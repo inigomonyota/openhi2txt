@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <sstream>
@@ -124,11 +125,14 @@ std::string definitionCacheKey(const fs::path& definitions,
         const std::string name = (error ? path.lexically_normal() : canonical).string();
         error.clear();
         const auto modified = fs::last_write_time(path, error);
-        const auto ticks = error ? 0 : modified.time_since_epoch().count();
+        const long long ticks = error
+            ? 0LL
+            : static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(modified.time_since_epoch()).count());
         error.clear();
         const auto size = fs::is_regular_file(path, error) ? fs::file_size(path, error) : 0;
         return name + "\x1f" + std::to_string(ticks) + "\x1f" +
-            std::to_string(error ? 0 : size);
+            std::to_string(static_cast<unsigned long long>(error ? 0 : size));
     };
     std::string lowered = requestedGame;
     std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
