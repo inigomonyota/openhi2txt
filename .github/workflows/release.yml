@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag name (e.g. v0.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            archive_ext: tar.gz
+          - name: windows-x64
+            os: windows-2022
+            archive_ext: zip
+          - name: macos-arm64
+            os: macos-latest
+            archive_ext: tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libminizip-dev zlib1g-dev ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install minizip ninja
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOPENHI2TXT_BUILD_CLI=ON
+          -DBUILD_TESTING=ON
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          MINIZIP_PREFIX="$(brew --prefix minizip)"
+          ZLIB_PREFIX="$(brew --prefix zlib)"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENHI2TXT_BUILD_CLI=ON \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_PREFIX_PATH="${MINIZIP_PREFIX};${ZLIB_PREFIX}" \
+            -DMINIZIP_INCLUDE_DIR="${MINIZIP_PREFIX}/include" \
+            -DMINIZIP_LIBRARY="${MINIZIP_PREFIX}/lib/libminizip.dylib"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build -A x64
+          -DOPENHI2TXT_BUILD_CLI=ON
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Run unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage release archive (Unix)
+        if: runner.os != 'Windows'
+        env:
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          mkdir -p dist/stage
+          cp build/Release/bin/openhi2txt dist/stage/
+          cp README.md LICENSE.txt THIRD_PARTY_NOTICES.md dist/stage/
+          tar -C dist/stage -czf "dist/openhi2txt-${TAG_NAME}-${{ matrix.name }}.tar.gz" .
+
+      - name: Stage release archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force dist/stage | Out-Null
+          Copy-Item build/Release/bin/openhi2txt.exe dist/stage/
+          Copy-Item README.md, LICENSE.txt, THIRD_PARTY_NOTICES.md dist/stage/
+          Compress-Archive -Path dist/stage/* -DestinationPath "dist/openhi2txt-${env:TAG_NAME}-${{ matrix.name }}.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/openhi2txt-*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" artifacts/* --clobber
+          else
+            gh release create "$TAG_NAME" artifacts/* \
+              --target "${{ github.sha }}" \
+              --title "openhi2txt $TAG_NAME" \
+              --generate-notes
+          fi
