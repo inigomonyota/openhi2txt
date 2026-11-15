@@ -24,6 +24,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           submodules: recursive
           persist-credentials: false
 
@@ -90,7 +91,7 @@ jobs:
             gh release upload "$TAG_NAME" artifacts/* --clobber
           else
             gh release create "$TAG_NAME" artifacts/* \
-              --target "${{ github.sha }}" \
+              --verify-tag \
               --title "openhi2txt $TAG_NAME" \
               --generate-notes
           fi
