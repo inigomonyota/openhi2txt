@@ -1,0 +1,3 @@
+[submodule "thirdparty/libchdr"]
+	path = thirdparty/libchdr
+	url = https://github.com/inigomonyota/libchdr.git

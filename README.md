@@ -28,7 +28,7 @@ declare the minimum openhi2txt version they require:
 
 ```xml
 <!DOCTYPE openhi2txt>
-<openhi2txt requires="0.2.0" label="Example" ingame-score="true">
+<openhi2txt requires="0.3.0" label="Example" ingame-score="true">
     <!-- definition -->
 </openhi2txt>
 ```
@@ -42,6 +42,11 @@ actually depends on an openhi2txt extension.
 Version 0.2.0 adds two opt-in definition extensions: terminated loops with
 `loop@stop-when` and positional output lookup with
 `column@source-row="output_index"`. Neither changes behavior when omitted.
+Version 0.3.0 adds bounded logical-disk input from a MAME DIF overlay with
+`structure@file="dif"`, `structure@offset`, and `structure@length`. It also
+adds ranked-points table aggregation for games whose summary leaderboard is
+derived from positions in several underlying tables, and per-column header
+visibility with `column@header="false"`.
 
 ## Use It As A Library
 
@@ -58,7 +63,24 @@ target_link_libraries(your_app PRIVATE openhi2txt::openhi2txt)
 
 The public API returns ordinary C++ containers and structs. Typical frontend
 startup code can bulk-load persisted score XML with `readAllPersistedGames()`,
-then call `refreshGame()` after a game exits to decode live `.hi` or nvram data.
+then call `refreshGame()` after a game exits to decode live `.hi`, NVRAM, or
+DIF-backed data. Call `decodeGame()` with one or more `HiScoreInput` byte
+buffers when the source is already in memory, such as a live MAME snapshot.
+Call `planGameInputs()` to derive the conservative source ranges MAME should
+watch.  After stabilization, pass the complete set of offset-addressed ranges
+to `decodeSparseGame()`; OpenHi2txt reconstructs the decoder buffer without
+transmitting unrelated `.hi` or NVRAM bytes.
+
+With the companion MAME hiscore plugin, `MameLiveClient` owns the localhost
+connection, identity handshake, watch negotiation, reconnection, sparse
+reconstruction, and decoding pipeline. Applications receive decoded
+`HiScoreResult` updates without implementing the wire protocol.
+
+Frontends may supply a structured MAME identity (`machine`, `softwareList`,
+and `software`) instead of constructing definition filenames. OpenHi2txt 0.5.0
+can bind that identity in an `<openhi2txt id="...">` definition and uses the
+same resolver for persisted/default display, static NVRAM extraction, direct
+buffer decoding, and live updates.
 
 ## Use It As A CLI Tool
 
@@ -66,6 +88,12 @@ The CLI is built by default and produces an `openhi2txt` executable:
 
 ```text
 openhi2txt -d hi2txt.zip -m <mame> -g <romname> -xml
+```
+
+Software-list NVRAM can be read without live capture:
+
+```text
+openhi2txt --defs hi2txt.zip --mame-root <mame> --machine genesis --software-list megadriv --software tecmobb --xml
 ```
 
 Original hi2txt-style arguments are also accepted, including `-descr`/`-ds`,
@@ -86,6 +114,14 @@ cmake -S . -B build -DOPENHI2TXT_BUILD_CLI=OFF
 
 ## Building
 
+libchdr is pinned as a Git submodule. When cloning, include submodules:
+
+```bash
+git clone --recurse-submodules <repository-url>
+```
+
+For an existing checkout, initialize it with `git submodule update --init`.
+
 Windows with Visual Studio 2022:
 
 ```powershell
@@ -95,6 +131,8 @@ cmake --build --preset windows-msvc
 
 The Windows/MSVC x64 build uses `/MD` static zlib/minizip files under
 `thirdparty/zlib-static/lib/msvc-x64-md`. No zlib DLL is copied or required.
+libchdr and its CHD codecs are also linked statically, so no additional runtime
+DLLs are placed beside `openhi2txt.exe`.
 
 Windows with Ninja:
 
@@ -115,8 +153,18 @@ find minizip automatically, pass `MINIZIP_INCLUDE_DIR` and `MINIZIP_LIBRARY`.
 
 Third-party notes:
 - rapidxml is header-only and bundled under `thirdparty/rapidxml-1.13`.
+- libchdr is pinned under `thirdparty/libchdr`, built statically, and configured
+  without CD/GD-ROM support.
 - Windows/MSVC x64 expects `/MD` static zlib/minizip under
   `thirdparty/zlib-static/lib/msvc-x64-md`.
 - Linux expects zlib/minizip from the system or explicit CMake paths.
 - Dependency licenses and source details are listed in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Filesystem-backed scores (0.6.0)
+
+Read-only ext2 path lookup is available for DIF-backed scores that relocate on
+save. [Carnival King's definition](examples/carnking.xml) uses named score files
+instead of fixed offsets. Existing raw-offset definitions remain supported.
+See the [XML reference](docs/xml-reference.md#filesystem-sources-openhi2txt-060)
+for syntax, supported ext2 features, and the file-backed-refresh requirement.

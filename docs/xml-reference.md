@@ -89,7 +89,7 @@ declare its minimum required version:
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE openhi2txt>
-<openhi2txt requires="0.2.0" label="Example">
+<openhi2txt requires="0.3.0" label="Example">
   <!-- definition -->
 </openhi2txt>
 ```
@@ -103,12 +103,59 @@ The `openhi2txt` root supports the same attributes and children as `hi2txt`,
 plus the required `requires` attribute and explicitly documented extensions.
 Version 0.2.0 introduces `loop@stop-when` and
 `column@source-row="output_index"`. Existing definitions should keep the legacy
-root until they actually use an extension. The root alone never changes
+root until they actually use an extension. Version 0.3.0 introduces bounded
+logical-disk input with `structure@file="dif"`, `structure@offset`, and
+`structure@length`. Version 0.4.0 introduces bounded, named binary decoders
+through `structure/decode`. Version 0.5.0 introduces structured MAME identity
+bindings through the root `id` attribute and `identity` child. The root alone never changes
 extraction, filtering, sorting, or rendering behavior.
 
 The DOCTYPE is a compatibility marker, not a schema source. OpenHi2txt uses
 RapidXML to parse the document and validates the supported elements and
 attributes in its own code. It does not load, resolve, or validate a DTD.
+
+#### OpenHi2txt extension index
+
+Every extension in this table requires the `openhi2txt` root and a `requires`
+version at least as new as the version shown. OpenHi2txt rejects this syntax
+under the legacy `hi2txt` root.
+
+| Version | Extension | Syntax | Reference |
+| --- | --- | --- | --- |
+| 0.2.0 | Terminated loops | `loop@stop-when="ID:value"` | [Terminated loops](#terminated-loops-openhi2txt-020) |
+| 0.2.0 | Positional source rows | `column@source-row="output_index"` | [Positional source rows](#positional-source-rows-openhi2txt-020) |
+| 0.3.0 | Bounded DIF/CHD input | `structure@file="dif"` with `offset` and `length` | [DIF-backed logical disks](#dif-backed-logical-disks-openhi2txt-030) |
+| 0.3.0 | Ranked-points aggregation | `table/ranked-points/qualifier` | [Ranked-points aggregation](#ranked-points-aggregation-openhi2txt-030) |
+| 0.3.0 | Column-header visibility | `column@header="false"` | [Column-header visibility](#column-header-visibility-openhi2txt-030) |
+| 0.4.0 | Structure decode regions | `structure/decode` | [Structure decode regions](#structure-decode-regions-openhi2txt-040) |
+| 0.5.0 | MAME identity binding | `openhi2txt@id` and `identity` | [MAME identity bindings](#mame-identity-bindings-openhi2txt-050) |
+
+### MAME identity bindings (OpenHi2txt 0.5.0)
+
+Software-list definitions can identify their runtime source without encoding
+that identity in the ZIP entry name:
+
+```xml
+<openhi2txt requires="0.5.0" id="genesis_tecmobb">
+  <identity type="mame" machine="genesis"
+            software-list="megadriv" software="tecmobb"/>
+  <!-- structures and output -->
+</openhi2txt>
+```
+
+`id` is the stable OpenHi2txt definition and persisted-score key. `machine` is
+the actual MAME system used to launch the software and to name its NVRAM
+directory. `software-list` identifies the catalog entry, while `software` is
+its short name. These are input identity facts, not decoding instructions.
+More than one `identity` may point to the same definition, but a single MAME
+identity may not be declared by multiple definitions.
+
+This extension is intentionally unavailable under the legacy `hi2txt` root,
+so original hi2txt safely ignores OpenHi2txt-only console definitions.
+
+All other grammar in this reference is shared with the legacy root unless its
+section explicitly identifies it as an OpenHi2txt extension. Merely changing
+the root does not enable or alter any decoding behavior.
 
 ## Top-level organization
 
@@ -148,8 +195,9 @@ MAME short name of the target definition.
 
 ## Structures
 
-A `structure` describes one possible binary layout. OpenHi2txt tries structures
-in document order and uses the first one whose file and checks match.
+A `structure` describes a binary input layout. OpenHi2txt processes structures
+in document order and merges matching rows by field ID. The first successfully
+decoded structure selects the output.
 
 ```xml
 <structure file=".hi" output="DEFAULT" byte-swap="2">
@@ -164,6 +212,135 @@ in document order and uses the first one whose file and checks match.
 | `file` | `.hi` by default, or another file relative to the game's data location, commonly an NVRAM file name. |
 | `output` | ID of the `output` to render. Omit it to select the unnamed output. |
 | `byte-swap` | Swaps fixed-size chunks across the entire selected input before decoding. |
+| `offset` | OpenHi2txt 0.3.0 extension: with `file="dif"`, absolute byte offset in the resolved logical disk. |
+| `length` | OpenHi2txt 0.3.0 extension: with `file="dif"`, number of logical-disk bytes supplied to the structure decoder. |
+
+### DIF-backed logical disks (OpenHi2txt 0.3.0)
+
+A writable MAME DIF overlay can be decoded by selecting `file="dif"` and a
+bounded logical-disk byte range:
+
+```xml
+<structure file="dif" offset="0x1120" length="0x424">
+  <loop count="10">
+    <elt id="NAME" type="text" size="3"/>
+    <elt id="SCORE" type="int" size="4"/>
+  </loop>
+</structure>
+```
+
+For a requested game named `example`, the input is
+`diff/example.dif`. When that file is absent, the input is not found and no
+table is decoded. The base CHD is not used by itself as a fallback.
+
+The input lookup first checks `diff/example.dif`. MAME disks do not always use
+the machine's short name, so OpenHi2txt then examines the CHD filenames directly
+inside `roms/example` and checks `diff/<chd-name>.dif`. For example, a disk named
+`golf_fore_v1.00.25.chd` is paired with `golf_fore_v1.00.25.dif`.
+
+The DIF header identifies its required parent by SHA-1. OpenHi2txt checks the
+CHD candidates inside `roms/example`, followed by `roms/example.chd`. Header
+identities are compared; the complete files are not hashed. Neither the ROM
+tree nor the DIF directory is searched recursively.
+
+The parent and overlay are exposed as one read-only logical disk. Only CHD
+hunks intersecting the requested range are decompressed, and already-read hunks
+are reused by later structures. `offset` and `length` accept decimal values or
+hexadecimal values beginning with `0x`. Both attributes are required, and
+`length` must be greater than zero.
+
+The first byte of the selected window becomes input position zero for the
+structure body. Element offsets and exact byte-signature check offsets are
+therefore relative to the window, while the structure's own `offset` remains
+relative to the complete logical disk.
+
+A `size` check on a DIF-backed structure measures the selected window, not the
+physical DIF or the complete logical disk. It is normally redundant because a
+successful read already produces exactly `length` bytes. The physical DIF size
+is not stable as additional disk blocks are written.
+
+`file="dif"`, structure `offset`, and structure `length` are rejected under the
+legacy `hi2txt` root.
+
+### Filesystem sources (OpenHi2txt 0.6.0)
+
+Use a filesystem structure when saved files can move between disk blocks:
+
+```xml
+<structure file="dif" filesystem="ext2" partition="1">
+  <source file="/hiscore/ko_higame.dat">
+    <check><size>48</size></check>
+    <loop count="3">
+      <elt id="NAME" type="text" size="4"/>
+      <elt id="SCORE" type="int" size="4" endianness="little_endian"/>
+      <elt id="META" type="raw" size="8"/>
+    </loop>
+  </source>
+</structure>
+```
+
+`partition` selects primary MBR entry 1 through 4 (one-based; decimal or hex).
+`filesystem="ext2"` selects the read-only filesystem implementation. The usual
+DIF lookup and parent identity rules still apply, including requiring a DIF.
+`offset`, `length`, and structure `byte-swap` cannot be combined with filesystem
+mode. Filesystem structures contain one or more `source` elements only.
+
+Each `source@file` is an absolute, case-sensitive path within that filesystem,
+not a host path. Empty components, `.` and `..`, backslashes, and symlinks are
+unsupported. Each source supports the existing `check`, `decode`, `elt`, `loop`,
+and `byte-swap` behavior. Its cursor starts at zero; element offsets, byte
+checks, and decode regions address bytes within that file. Size checks measure
+the extracted file. Source results merge by row and field ID into the enclosing
+structure's selected output. Use distinct field IDs across sources. All sources
+must be read and decoded successfully; failures return an error without partial
+results or a new persisted score cache.
+
+The ext2 reader supports revisions 0 and 1, 1/2/4 KiB blocks, direct and indirect
+block pointers, sparse files, and linear directories. It also recognizes the
+validated inverted revision-0 superblock used by Carnival King, where some
+inode flags contain a copy of the inode change timestamp. Files and directories
+are limited to 16 MiB each. Unsupported feature flags, journaled filesystems,
+extents, indexed directories, and invalid bounds fail explicitly.
+
+Filesystem reads are available through file-backed CLI reads and `refreshGame`.
+Static live range planning and buffer/sparse decoding reject these definitions:
+watching changing filesystem metadata needs a separate dynamic planning layer.
+Each refresh resolves the file paths again. Existing raw DIF windows are unchanged.
+See `examples/carnking.xml` for multiple sources feeding existing output tables.
+
+### Structure decode regions (OpenHi2txt 0.4.0)
+
+Some games encrypt or otherwise transform complete blocks that contain several
+independent fields. A `decode` child preprocesses a bounded region before the
+ordinary `elt` and `loop` elements read it:
+
+```xml
+<structure file="at28c16">
+  <decode type="namco-system12" offset="0x100" size="0xE0"/>
+  <decode type="namco-system12" offset="0x400" size="0x168"/>
+
+  <elt id="SETTINGS" type="raw" offset="0x100" size="0xE0"/>
+  <!-- Further elements can address the decoded bytes normally. -->
+</structure>
+```
+
+`offset` is the byte offset in the selected input and `size` is the decoded
+payload length. Both accept decimal or hexadecimal values. Decoding preserves
+the input's size and offsets by replacing the encoded payload in a working
+copy; trailer bytes remain in place. Every region is bounds-checked, and a
+decoder-specific integrity failure rejects the input as invalid data.
+Structure-level byte swapping, when requested, occurs before these regions are
+decoded.
+
+The currently supported decoder type is:
+
+| Type | Purpose |
+|---|---|
+| `namco-system12` | Namco System 12 EEPROM blocks, including their rolling-XOR decoding and checksum validation. The encoded region occupies `size + 10` bytes. |
+
+The element is intentionally decoder-neutral: additional named algorithms can
+be added without changing how definitions bound or consume decoded regions.
+`decode` is rejected under the legacy `hi2txt` root.
 
 ### File-size checks
 
@@ -552,6 +729,54 @@ Table attributes:
 | `line-ignore` | One or more `COLUMN:VALUE` rules, separated by commas or semicolons. |
 | `line-ignore-operator` | `and` (default), `or`, or a comparison operator used by the rules. |
 | `display` | `always`, `extra`, or `debug`. |
+| `show-empty` | Emit the table and its headings even when no rows survive filtering (OpenHi2txt extension). |
+
+Additional sort keys may follow the primary table attributes. They are applied
+in declaration order when the preceding key compares equal:
+
+```xml
+<table sort="SCORE" sort-order="desc">
+  <sort src="WINS" order="desc"/>
+  <sort src="STREAK" order="desc"/>
+  ...
+</table>
+```
+
+Each `sort` child requires `src` and accepts `order` (`asc` or `desc`) and
+`format`. This is an OpenHi2txt extension and is rejected under the legacy
+`hi2txt` root.
+
+### Midway sorting (OpenHi2txt 0.3.0)
+
+Some 1990s Midway games repeatedly sort the same player-profile array with the
+DJGPP/BSD `qsort` implementation. Equal records are not stable, so each page's
+order influences ties on later pages. Use `sort-method="midway"` on `output` to
+reproduce that behavior:
+
+```xml
+<output sort-method="midway">
+  <table display="sort" sort="TEAMS" sort-format="TEAM COUNT"
+         sort-order="desc">
+    <sort src="WINS" order="desc"/>
+    <column id="NAME"/>
+  </table>
+  <table id="GREATEST PLAYERS" sort="WINS" sort-order="desc">
+    <sort src="GAMES" order="desc"/>
+    <column id="NAME"/>
+    <column id="WINS"/>
+  </table>
+</output>
+```
+
+Every table sorts the complete row array produced by the preceding table.
+Filtering is evaluated by the comparator, so ignored rows remain in the shared
+array but sort after eligible rows. A table with `display="sort"` performs its
+sort without being emitted; this models an in-game page that affects later tie
+ordering but is not wanted in the text output.
+
+`sort-method="midway"`, child `sort` elements, and `display="sort"` are
+OpenHi2txt extensions. Use them only when reproducing a verified Midway/DJGPP
+sort chain; ordinary outputs retain their existing stable sorting behavior.
 
 For example, omit empty factory rows:
 
@@ -566,6 +791,35 @@ For example, omit empty factory rows:
 The default and `always` are shown by `-r`.
 
 Fields and columns accept the same `display` values.
+
+Set `show-empty="true"` when an empty table is meaningful and should remain
+visible in text, XML, or library output. The default is `false`, preserving the
+legacy behavior of omitting tables with no rows. `show-empty` is rejected under
+the legacy `hi2txt` root.
+
+### Column-header visibility (OpenHi2txt 0.3.0)
+
+Set `header="false"` to hide a column's heading without removing the column or
+its values:
+
+```xml
+<table id="SCORES">
+  <column id="RANK" src="index" format="+1" header="false"/>
+  <column id="NAME"/>
+  <column id="SCORE"/>
+</table>
+```
+
+The text heading for this example is `|NAME|SCORE`; the empty first cell keeps
+the headings aligned with the data. If every column has `header="false"`, the
+entire heading line is omitted. XML output likewise retains empty positional
+`col` elements when some headings remain and omits the `col` block when all
+headings are hidden.
+
+In library results, hidden headings are empty strings in
+`HiScoreTable::columns`; the corresponding `HiScoreColumn` in `columnInfo`
+continues to expose the definition ID and source. The default is `true`.
+`header` is rejected under the legacy root.
 
 ### Positional source rows (OpenHi2txt 0.2.0)
 
@@ -593,6 +847,40 @@ score-only candidate rows to participate in sorting even when they have no
 
 `source-row` is rejected under the legacy root. Omitting it preserves the
 ordinary current-row lookup exactly.
+
+### Ranked-points aggregation (OpenHi2txt 0.3.0)
+
+Some games build a summary leaderboard by awarding points for positions in
+several underlying qualifier tables. A `ranked-points` child generates those
+summary rows before the table's ordinary filtering, sorting, and limiting:
+
+```xml
+<table id="LEGENDS" sort="POINTS" sort-order="desc" lines-max="10">
+  <ranked-points name-column="NAME" points-column="POINTS">
+    <qualifier src="STREAK NAME" points="10"/>
+    <qualifier src="SPEED NAME" points="10"/>
+    <qualifier src="JAGO HITS NAME" points="5"/>
+    <qualifier src="JAGO DAMAGE NAME" points="5"/>
+  </ranked-points>
+  <column id="RANK" src="index" format="+1"/>
+  <column id="NAME"/>
+  <column id="POINTS"/>
+</table>
+```
+
+For a qualifier whose `points` value is `N`, source row zero awards `N`
+points, row one awards `N - 1`, and so on through row `N - 1`. A name appearing
+more than once in one qualifier receives only its best award from that
+qualifier, but awards from different qualifiers are added together. Empty
+names are ignored, and surrounding whitespace is removed before names are
+matched.
+
+`name-column` and `points-column` name the generated values and default to
+`NAME` and `POINTS`. Equal totals retain first-seen order: qualifier declaration
+order first, then source-row order. The surrounding table can use the normal
+`sort`, `sort-order`, `lines-max`, formatting, display, and filtering features.
+
+`ranked-points` and `qualifier` are rejected under the legacy root.
 
 ## Formats
 
@@ -668,9 +956,11 @@ the default is `value`.
 The following children are accepted in a `format`:
 
 - Arithmetic: `add`/`increment`, `substract`/`decrement`, `multiply`, `divide`,
-  `remainder`, `divide_trunc`, `divide_round`, `shift`, `round`, and `trunc`.
+  `remainder`, `divide_trunc`, `divide_round`, `shift`, `bit-count`, `round`,
+  and `trunc`.
   The historic spelling `substract` is intentional. Long-form `shift` shifts
-  left; the inline `>N` shorthand shifts right.
+  left; the inline `>N` shorthand shifts right. `bit-count` replaces the value
+  with the number of set bits in its 64-bit integer representation.
 - Aggregation: `sum`, `min`, `max`, and `concat`.
 - Text: `prefix`, `suffix`/`postfix`, `pad`, `trim`, `replace`, `uppercase`,
   `lowercase`, `capitalize`, and `case`.
@@ -693,6 +983,9 @@ Or references to another field or column:
 ```
 
 Referenced `field` and `column` elements may themselves have a `format`.
+If that format depends on fields decoded outside the table's loop, those
+dependencies are available to every row. This permits a computed operand such
+as a sum of global counters to be used consistently across a table.
 
 Aggregation example:
 
@@ -870,6 +1163,7 @@ hi2txt | openhi2txt
 │   ├── check
 │   │   ├── definition
 │   │   └── size
+│   ├── decode (openhi2txt only)
 │   ├── elt
 │   └── loop
 │       └── elt
@@ -884,6 +1178,14 @@ hi2txt | openhi2txt
 │   ├── field
 │   └── table
 │       ├── column
-│       └── field
+│       ├── field
+│       └── ranked-points (openhi2txt only)
+│           └── qualifier
 └── sameas
 ```
+
+The tree shows the grammar common to both roots. The `openhi2txt` root adds
+only the extensions indexed above: `structure file="dif"` with `offset` and
+`length`, `structure/decode`, `loop stop-when`,
+`column source-row="output_index"`, column-header visibility, and the
+`table/ranked-points/qualifier` hierarchy.

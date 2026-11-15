@@ -1,4 +1,5 @@
 #include "xml/XmlParser.h"
+#include <functional>
 #include "xml/EntityMapper.h"
 #include "io/Utils.h"
 #include "openhi2txt/openhi2txt.h"
@@ -83,8 +84,11 @@ namespace openhi2txt {
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& allowedAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "label", "ingame-score" } },
-			{ "openhi2txt", { "requires", "label", "ingame-score" } },
+			{ "openhi2txt", { "requires", "id", "label", "ingame-score" } },
+			{ "identity", { "type", "machine", "software-list", "software" } },
 			{ "structure", { "file", "output", "byte-swap" } },
+			{ "source", { "file", "byte-swap" } },
+			{ "decode", { "type", "offset", "size" } },
 			{ "check", {} },
 			{ "definition", { "offset" } },
 			{ "size", {} },
@@ -93,8 +97,11 @@ namespace openhi2txt {
 				"endianness", "swap-skip-order", "byte-skip", "byte-trim", "byte-trunc", "nibble-skip",
 				"nibble-trim", "byte-swap", "bit-swap", "table-index-format", "bitmask", "src-unit-size",
 				"dst-unit-size", "ascii-step", "format", "offset" } },
-			{ "output", { "id" } },
+			{ "output", { "id", "sort-method" } },
 			{ "table", { "id", "line-ignore", "line-ignore-operator", "sort", "sort-order", "sort-format", "lines-max", "display" } },
+			{ "sort", { "src", "order", "format" } },
+			{ "ranked-points", { "name-column", "points-column" } },
+			{ "qualifier", { "src", "points" } },
 			{ "column", { "id", "src", "format", "display" } },
 			{ "field", { "id", "src", "format", "display" } },
 			{ "txt", {} },
@@ -120,6 +127,7 @@ namespace openhi2txt {
 			{ "divide_round", {} },
 			{ "round", {} },
 			{ "shift", {} },
+			{ "bit-count", {} },
 			{ "replace", { "src", "dst", "all" } },
 			{ "uppercase", {} },
 			{ "lowercase", {} },
@@ -136,8 +144,10 @@ namespace openhi2txt {
 
 	static const std::unordered_map<std::string, std::unordered_set<std::string>>& openExtensionAttrsByElement() {
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
+			{ "structure", { "offset", "length", "filesystem", "partition" } },
 			{ "loop", { "stop-when" } },
-			{ "column", { "source-row" } },
+			{ "table", { "show-empty" } },
+			{ "column", { "source-row", "header" } },
 		};
 		return allowed;
 	}
@@ -146,19 +156,21 @@ namespace openhi2txt {
 		static const std::unordered_set<std::string> formatParts = {
 			"add", "increment", "prefix", "multiply", "divide", "suffix", "postfix", "sum", "concat",
 			"min", "max", "pad", "trim", "substract", "decrement", "remainder", "trunc",
-			"divide_trunc", "divide_round", "round", "shift", "replace", "uppercase", "lowercase",
+			"divide_trunc", "divide_round", "round", "shift", "bit-count", "replace", "uppercase", "lowercase",
 			"capitalize", "case"
 		};
 		static const std::unordered_set<std::string> columnRefs = { "field", "column" };
 		static const std::unordered_set<std::string> concatChildren = { "field", "column", "txt" };
 		static const std::unordered_map<std::string, std::unordered_set<std::string>> allowed = {
 			{ "hi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
-			{ "openhi2txt", { "structure", "bitmask", "output", "format", "charset", "sameas" } },
-			{ "structure", { "check", "elt", "loop" } },
+			{ "openhi2txt", { "identity", "structure", "bitmask", "output", "format", "charset", "sameas" } },
+			{ "structure", { "check", "decode", "elt", "loop", "source" } },
+			{ "source", { "check", "decode", "elt", "loop" } },
 			{ "check", { "definition", "size" } },
 			{ "loop", { "elt" } },
 			{ "output", { "table", "field" } },
-			{ "table", { "column", "field" } },
+			{ "table", { "column", "field", "sort", "ranked-points" } },
+			{ "ranked-points", { "qualifier" } },
 			{ "format", formatParts },
 			{ "add", columnRefs },
 			{ "increment", columnRefs },
@@ -181,6 +193,7 @@ namespace openhi2txt {
 			{ "divide_round", columnRefs },
 			{ "round", columnRefs },
 			{ "shift", columnRefs },
+			{ "bit-count", columnRefs },
 			{ "replace", columnRefs },
 			{ "uppercase", columnRefs },
 			{ "lowercase", columnRefs },
@@ -223,10 +236,95 @@ namespace openhi2txt {
 		return parsed > 0;
 	}
 
+	static bool parseUint64(const std::string& raw, uint64_t& value) {
+		const std::string text = trim(raw);
+		if (text.empty() || text[0] == '-' || text[0] == '+') return false;
+
+		size_t position = 0;
+		uint64_t base = 10;
+		if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+			position = 2;
+			base = 16;
+		}
+		if (position == text.size()) return false;
+
+		uint64_t parsed = 0;
+		for (; position < text.size(); ++position) {
+			const unsigned char ch = static_cast<unsigned char>(text[position]);
+			uint64_t digit = 0;
+			if (ch >= '0' && ch <= '9') digit = ch - '0';
+			else if (base == 16 && ch >= 'a' && ch <= 'f') digit = ch - 'a' + 10;
+			else if (base == 16 && ch >= 'A' && ch <= 'F') digit = ch - 'A' + 10;
+			else return false;
+			if (digit >= base || parsed > (std::numeric_limits<uint64_t>::max() - digit) / base)
+				return false;
+			parsed = parsed * base + digit;
+		}
+
+		value = parsed;
+		return true;
+	}
+
 	static bool validateDefinitionNode(rapidxml::xml_node<>* n, bool allowOpenExtensions, std::string& error) {
 		if (!n || n->type() != rapidxml::node_element) return true;
 
 		const std::string name = n->name() ? n->name() : "";
+		if ((name == "source" || name == "identity" || name == "ranked-points" || name == "qualifier" || name == "decode") && !allowOpenExtensions) {
+			error = "The element '" + name +
+				"' is an openhi2txt extension and requires the 'openhi2txt' root.";
+			return false;
+		}
+		if ((name == "sort" || (name == "output" && n->first_attribute("sort-method"))) &&
+			!allowOpenExtensions) {
+			error = "The " + name + " sorting extension requires an openhi2txt root.";
+			return false;
+		}
+		if (name == "output" && n->first_attribute("sort-method") &&
+			!ieq(trim(attr(n, "sort-method")), "midway")) {
+			error = "Unsupported output sort-method '" + attr(n, "sort-method") +
+				"'; expected midway.";
+			return false;
+		}
+		if (name == "sort") {
+			if (trim(attr(n, "src")).empty()) {
+				error = "A table sort element requires a non-empty src attribute.";
+				return false;
+			}
+			const std::string order = trim(attr(n, "order"));
+			if (!order.empty() && !ieq(order, "asc") && !ieq(order, "ascending") &&
+				!ieq(order, "desc") && !ieq(order, "descending")) {
+				error = "Invalid table sort order '" + order +
+					"'; expected asc or desc.";
+				return false;
+			}
+		}
+		if (name == "identity") {
+			if (!ieq(trim(attr(n, "type")), "mame")) {
+				error = "Unsupported identity type '" + attr(n, "type") + "'.";
+				return false;
+			}
+			if (trim(attr(n, "machine")).empty()) {
+				error = "A MAME identity requires a non-empty machine attribute.";
+				return false;
+			}
+			if (!trim(attr(n, "software")).empty() && trim(attr(n, "software-list")).empty()) {
+				error = "A MAME software identity requires a non-empty software-list attribute.";
+				return false;
+			}
+		}
+		if (name == "openhi2txt" && n->first_node("identity")) {
+			const std::string id = trim(attr(n, "id"));
+			if (id.empty()) {
+				error = "An OpenHi2txt definition declaring an identity requires a non-empty id attribute.";
+				return false;
+			}
+			if (id == "." || id == ".." || std::any_of(id.begin(), id.end(), [](unsigned char ch) {
+				return !(std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.');
+			})) {
+				error = "An OpenHi2txt definition id may contain only letters, digits, '.', '_', and '-'.";
+				return false;
+			}
+		}
 		const auto& attrsByElement = allowedAttrsByElement();
 		const auto attrIt = attrsByElement.find(name);
 		if (attrIt == attrsByElement.end()) {
@@ -277,11 +375,139 @@ namespace openhi2txt {
 			}
 		}
 
+        if (name == "source") {
+            const std::string path = attr(n, "file");
+            if (!n->parent() || attr(n->parent(), "filesystem").empty() ||
+                path.size() < 2 || path.front() != '/' || path.back() == '/' ||
+                path.find('\\') != std::string::npos || path.find("//") != std::string::npos ||
+                path.find("/../") != std::string::npos || path.find("/./") != std::string::npos ||
+                path.substr(path.size()-2) == "/." ||
+                (path.size() >= 3 && path.substr(path.size()-3) == "/..")) {
+                error = "A source requires an absolute filesystem file path inside a filesystem structure.";
+                return false;
+            }
+        }
+
+		if (name == "structure") {
+			const bool isDif = ieq(attr(n, "file"), "dif");
+            const bool filesystem = n->first_attribute("filesystem") != nullptr;
+            if (filesystem) {
+                uint64_t partition = 0;
+                if (!isDif || attr(n, "filesystem") != "ext2" ||
+                    !parseUint64(attr(n, "partition"), partition) || partition < 1 || partition > 4 ||
+                    n->first_attribute("offset") || n->first_attribute("length") ||
+                    n->first_attribute("byte-swap") || !n->first_node("source")) {
+                    error = "A filesystem structure requires file='dif', filesystem='ext2', partition 1..4 and sources, without offset/length/byte-swap.";
+                    return false;
+                }
+                for (auto* c = n->first_node(); c; c = c->next_sibling()) {
+                    if (c->type() == rapidxml::node_element && std::string(c->name()) != "source") {
+                        error = "Filesystem structure decoding and checks belong inside source elements.";
+                        return false;
+                    }
+                }
+            } else if (n->first_attribute("partition") || n->first_node("source")) {
+                error = "Partition and sources require a filesystem structure.";
+                return false;
+            }
+			const bool hasOffset = n->first_attribute("offset") != nullptr;
+			const bool hasLength = n->first_attribute("length") != nullptr;
+			if (isDif && !allowOpenExtensions) {
+				error = "The file='dif' structure input is an openhi2txt extension and requires the 'openhi2txt' root.";
+				return false;
+			}
+			if ((hasOffset || hasLength) && !isDif) {
+				error = "The structure offset and length attributes are only supported with file='dif'.";
+				return false;
+			}
+			if (isDif && !filesystem && (!hasOffset || !hasLength)) {
+				error = "A structure using file='dif' requires both offset and length attributes.";
+				return false;
+			}
+			if (isDif && !filesystem) {
+				uint64_t offset = 0;
+				uint64_t length = 0;
+				if (!parseUint64(attr(n, "offset"), offset)) {
+					error = "Invalid structure offset; expected a non-negative decimal or hexadecimal byte offset.";
+					return false;
+				}
+				if (!parseUint64(attr(n, "length"), length) || length == 0) {
+					error = "Invalid structure length; expected a positive decimal or hexadecimal byte count.";
+					return false;
+				}
+			}
+		}
+
+		if (name == "decode") {
+			const std::string type = trim(attr(n, "type"));
+			if (!ieq(type, "namco-system12")) {
+				error = "Unsupported structure decoder '" + type + "'.";
+				return false;
+			}
+			uint64_t offset = 0;
+			uint64_t size = 0;
+			if (!parseUint64(attr(n, "offset"), offset)) {
+				error = "Invalid decode offset; expected a non-negative decimal or hexadecimal byte offset.";
+				return false;
+			}
+			if (!parseUint64(attr(n, "size"), size) || size == 0) {
+				error = "Invalid decode size; expected a positive decimal or hexadecimal byte count.";
+				return false;
+			}
+		}
+
 		if (name == "column" && n->first_attribute("source-row")) {
 			const std::string sourceRow = attr(n, "source-row");
 			if (!ieq(sourceRow, "output_index")) {
 				error = "Unsupported column source-row value '" + sourceRow +
 					"'; expected output_index.";
+				return false;
+			}
+		}
+
+		if (name == "column" && n->first_attribute("header")) {
+			const std::string header = trim(attr(n, "header"));
+			if (!ieq(header, "true") && !ieq(header, "false") &&
+				!ieq(header, "yes") && !ieq(header, "no") &&
+				header != "1" && header != "0") {
+				error = "Invalid column header value '" + header +
+					"'; expected true or false.";
+				return false;
+			}
+		}
+
+		if (name == "table" && n->first_attribute("show-empty")) {
+			const std::string showEmpty = trim(attr(n, "show-empty"));
+			if (!ieq(showEmpty, "true") && !ieq(showEmpty, "false") &&
+				!ieq(showEmpty, "yes") && !ieq(showEmpty, "no") &&
+				showEmpty != "1" && showEmpty != "0") {
+				error = "Invalid table show-empty value '" + showEmpty +
+					"'; expected true or false.";
+				return false;
+			}
+		}
+
+		if (name == "ranked-points") {
+			bool hasQualifier = false;
+			for (auto* child = n->first_node("qualifier"); child;
+				 child = child->next_sibling("qualifier")) {
+				hasQualifier = true;
+			}
+			if (!hasQualifier) {
+				error = "A ranked-points element requires at least one qualifier.";
+				return false;
+			}
+		}
+
+		if (name == "qualifier") {
+			if (trim(attr(n, "src")).empty()) {
+				error = "A ranked-points qualifier requires a non-empty src attribute.";
+				return false;
+			}
+			uint64_t points = 0;
+			if (!parseUint64(attr(n, "points"), points) || points == 0 ||
+				points > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+				error = "A ranked-points qualifier requires a positive integer points value.";
 				return false;
 			}
 		}
@@ -783,6 +1009,18 @@ namespace openhi2txt {
 
 		auto* root = firstElementNode(doc);
 		if (!isDefinitionRoot(root)) return def;
+		if (ieq(elementName(root), "openhi2txt")) {
+			def.id = trim(attr(root, "id"));
+			for (auto* identity = root->first_node("identity"); identity;
+				 identity = identity->next_sibling("identity")) {
+				GameDef::Identity parsedIdentity;
+				parsedIdentity.type = trim(attr(identity, "type"));
+				parsedIdentity.machine = trim(attr(identity, "machine"));
+				parsedIdentity.softwareList = trim(attr(identity, "software-list"));
+				parsedIdentity.software = trim(attr(identity, "software"));
+				def.identities.push_back(std::move(parsedIdentity));
+			}
+		}
 
 		for (auto* n = root->first_node(); n; n = n->next_sibling()) {
 			const char* nm = n->name();
@@ -831,6 +1069,7 @@ namespace openhi2txt {
 					else if (ieq(cn, "divide_trunc")) addMathOp(FormatKind::DivideTrunc);
 					else if (ieq(cn, "divide_round")) addMathOp(FormatKind::DivideRound);
 					else if (ieq(cn, "shift")) addMathOp(FormatKind::Shift);
+					else if (ieq(cn, "bit-count")) addMathOp(FormatKind::BitCount);
 
 					else if (ieq(cn, "round")) { addMathOp(FormatKind::Round); f.doRound = true; }
 					else if (ieq(cn, "trunc")) { addMathOp(FormatKind::Trunc); f.doTrunc = true; }
@@ -1067,10 +1306,31 @@ namespace openhi2txt {
 				}
 			}
 			else if (ieq(nm, "structure")) {
+                std::function<Structure(rapidxml::xml_node<>*)> parseStructure;
+                parseStructure = [&](rapidxml::xml_node<>* n) -> Structure {
 				Structure s;
+                s.filesystem = attr(n, "filesystem");
+                uint64_t partition = 0;
+                parseUint64(attr(n, "partition"), partition);
+                s.partition = static_cast<unsigned>(partition);
 				s.fileKind = attr(n, "file");
+				if (ieq(s.fileKind, "dif") && s.filesystem.empty()) {
+					s.hasInputWindow = true;
+					parseUint64(attr(n, "offset"), s.inputOffset);
+					parseUint64(attr(n, "length"), s.inputLength);
+				}
 				s.byteSwap = std::atoi(attr(n, "byte-swap").c_str());
 				s.outputId = attr(n, "output");
+
+				for (auto* d = n->first_node("decode"); d; d = d->next_sibling("decode")) {
+					DecodeRegion region;
+					region.type = ieq(trim(attr(d, "type")), "namco-system12")
+						? "namco-system12"
+						: trim(attr(d, "type"));
+					parseUint64(attr(d, "offset"), region.offset);
+					parseUint64(attr(d, "size"), region.size);
+					s.decodeRegions.push_back(std::move(region));
+				}
 
 				if (auto* ck = n->first_node("check")) {
 
@@ -1315,6 +1575,11 @@ namespace openhi2txt {
 					}
 				}
 
+                for (auto* child = n->first_node("source"); child; child = child->next_sibling("source"))
+                    s.sources.push_back(parseStructure(child));
+                return s;
+                };
+                Structure s = parseStructure(n);
 				def.structures.push_back(std::move(s));
 			}
 			else if (ieq(nm, "output")) {
@@ -1327,6 +1592,7 @@ namespace openhi2txt {
 				OutputDef& out = outputIt->second;
 				if (firstOutputWithId) def.outputOrder.push_back(outId);
 				out.id = outId;
+				out.sortMethod = attr(n, "sort-method");
 				const size_t firstTableIndex = out.tables.size();
 				const size_t firstFieldIndex = out.fields.size();
 
@@ -1337,11 +1603,34 @@ namespace openhi2txt {
 					Table tab;
 					tab.id = attr(t, "id");
 					tab.display = attr(t, "display");
+					tab.showEmpty = Utils::parseBool(attr(t, "show-empty"), false);
 					tab.lineIgnoreRaw = attr(t, "line-ignore");
 					tab.sortKey = attr(t, "sort");
 					tab.sortOrder = attr(t, "sort-order");
 					tab.sortFormat = formatAttr(t, "sort-format");
+					if (!tab.sortKey.empty())
+						tab.sortKeys.push_back({ tab.sortKey, tab.sortOrder, tab.sortFormat });
+					for (auto* key = t->first_node("sort"); key; key = key->next_sibling("sort")) {
+						SortKeyDef sortKey{ attr(key, "src"), attr(key, "order"), formatAttr(key) };
+						if (!trim(sortKey.src).empty()) tab.sortKeys.push_back(std::move(sortKey));
+					}
 					tab.linesMax = std::max(0, std::atoi(attr(t, "lines-max").c_str()));
+
+					if (auto* ranked = t->first_node("ranked-points")) {
+						tab.rankedPoints.enabled = true;
+						const std::string nameColumn = trim(attr(ranked, "name-column"));
+						const std::string pointsColumn = trim(attr(ranked, "points-column"));
+						if (!nameColumn.empty()) tab.rankedPoints.nameColumn = nameColumn;
+						if (!pointsColumn.empty()) tab.rankedPoints.pointsColumn = pointsColumn;
+
+						for (auto* qualifier = ranked->first_node("qualifier"); qualifier;
+							 qualifier = qualifier->next_sibling("qualifier")) {
+							RankedPointsSource source;
+							source.src = trim(attr(qualifier, "src"));
+							source.maxPoints = std::atoi(attr(qualifier, "points").c_str());
+							tab.rankedPoints.sources.push_back(std::move(source));
+						}
+					}
 
 					std::string igop = attr(t, "line-ignore-operator");
 					if (ieq(igop, "or")) tab.ignoreOp = IgnoreOp::Or;
@@ -1358,6 +1647,8 @@ namespace openhi2txt {
 							Column col{ attr(c, "id"), attr(c, "src"), formatAttr(c), attr(c, "display") };
 							if (c->first_attribute("source-row") && ieq(attr(c, "source-row"), "output_index"))
 								col.sourceRow = SourceRowKind::OutputIndex;
+							if (c->first_attribute("header"))
+								col.headerVisible = Utils::parseBool(attr(c, "header"), true);
 
 							if (trim(col.src).empty()) col.src = col.id;
 							if (col.id.empty() && !col.src.empty()) col.id = col.src;

@@ -44,7 +44,8 @@ std::string usage() {
         "                  [-keep-first-table <yes|no>] [-max-lines <n>] [-max-columns <n>]\n"
         "                  [-score-grouping <yes|no>] [-score-grouping-separator <string>]\n"
         "                  [-score-grouping-size <n>] [-trace|-notrace]\n"
-        "                  [--mame-root <path> --game <romname> | <hi_file_path>]";
+        "                  [--mame-root <path> --game <romname> | <hi_file_path>]\n"
+        "                  [--mame-root <path> --machine <name> [--software-list <list> --software <name>]]";
 }
 
 } // namespace
@@ -80,6 +81,18 @@ Args Args::parse(int argc, char** argv) {
         }
         else if (s == "--game" || s == "-game" || s == "-g") {
             std::string v; if (!next(v)) { a.error=s + " missing value"; return a; } a.game=v;
+        }
+        else if (s == "--machine") {
+            std::string v; if (!next(v)) { a.error=s + " missing value"; return a; } a.machine=v;
+        }
+        else if (s == "--software-list") {
+            std::string v; if (!next(v)) { a.error=s + " missing value"; return a; } a.softwareList=v;
+        }
+        else if (s == "--software") {
+            std::string v; if (!next(v)) { a.error=s + " missing value"; return a; } a.software=v;
+        }
+        else if (s == "--input") {
+            std::string v; if (!next(v)) { a.error=s + " missing value"; return a; } a.inputPath=v;
         }
         else if (s == "-r" || s == "--read") { /* default read mode */ }
         else if (s == "-ra" || s == "--ra" || s == "--all") { a.showExtra = true; }
@@ -138,7 +151,18 @@ Args Args::parse(int argc, char** argv) {
         a.error = usage();
         return a;
     }
-    if (a.action == CliAction::Read && (a.mameRoot.empty() || a.game.empty())) {
+    if (!a.software.empty() && (a.machine.empty() || a.softwareList.empty())) {
+        a.error = "--software requires --machine and --software-list";
+        return a;
+    }
+    if (!a.softwareList.empty() && a.software.empty()) {
+        a.error = "--software-list requires --software";
+        return a;
+    }
+    const bool structuredIdentity = !a.machine.empty();
+    if (a.action == CliAction::Read &&
+        ((!structuredIdentity && (a.mameRoot.empty() || a.game.empty())) ||
+         (structuredIdentity && a.mameRoot.empty() && a.inputPath.empty()))) {
         a.error = usage();
         return a;
     }

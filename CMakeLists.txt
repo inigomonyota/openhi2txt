@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(openhi2txt
-    VERSION 0.2.0
+    VERSION 0.6.0
     LANGUAGES CXX
 )
 
@@ -28,18 +28,26 @@ add_library(openhi2txt STATIC
     src/app/DefResolver.cpp
     src/app/InputProcessor.cpp
     src/core/Formatter.cpp
+    src/core/InputPlanner.cpp
     src/core/Processor.cpp
     src/core/ResultRenderer.cpp
+    src/core/SparseInput.cpp
     src/core/StructureSelector.cpp
     src/io/ArchiveManager.cpp
+    src/io/FilesystemReader.cpp
+    src/io/ChdReader.cpp
     src/io/HiscoreDat.cpp
     src/io/Utils.cpp
+    src/live/LiveProtocol.cpp
+    src/live/MameLiveClient.cpp
     src/xml/XmlParser.cpp
 )
 
 add_library(openhi2txt::openhi2txt ALIAS openhi2txt)
 
 target_compile_features(openhi2txt PUBLIC cxx_std_17)
+find_package(Threads REQUIRED)
+target_link_libraries(openhi2txt PUBLIC Threads::Threads)
 
 set_target_properties(openhi2txt PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lib"
@@ -84,11 +92,11 @@ if(WIN32 AND MSVC)
         )
     endif()
 
-    add_library(openhi2txt_zlib STATIC IMPORTED)
-    set_target_properties(openhi2txt_zlib PROPERTIES
-        IMPORTED_LOCATION "${OPENHI2TXT_BUNDLED_ZLIB_LIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}"
-    )
+    set(ZLIB_INCLUDE_DIR "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}" CACHE PATH
+        "Path to the zlib headers used by openhi2txt" FORCE)
+    set(ZLIB_LIBRARY "${OPENHI2TXT_BUNDLED_ZLIB_LIB}" CACHE FILEPATH
+        "Path to the static zlib library used by openhi2txt" FORCE)
+    find_package(ZLIB REQUIRED)
 
     add_library(openhi2txt_minizip STATIC IMPORTED)
     set_target_properties(openhi2txt_minizip PROPERTIES
@@ -96,7 +104,7 @@ if(WIN32 AND MSVC)
         INTERFACE_INCLUDE_DIRECTORIES "${OPENHI2TXT_BUNDLED_ZLIB_INCLUDE}"
     )
 
-    target_link_libraries(openhi2txt PRIVATE openhi2txt_zlib openhi2txt_minizip)
+    target_link_libraries(openhi2txt PRIVATE ZLIB::ZLIB openhi2txt_minizip)
     target_compile_definitions(openhi2txt PRIVATE ZLIB_STATIC)
 else()
     find_package(ZLIB REQUIRED)
@@ -117,6 +125,42 @@ else()
 
     target_include_directories(openhi2txt PRIVATE "${MINIZIP_INCLUDE_DIR}")
     target_link_libraries(openhi2txt PRIVATE ZLIB::ZLIB "${MINIZIP_LIBRARY}")
+endif()
+
+# libchdr is pinned as a submodule and built statically. It reuses the zlib
+# target selected above, while CD/GD-ROM support is excluded because
+# openhi2txt reads writable hard-disk images and their delta overlays.
+function(openhi2txt_add_libchdr)
+    set(BUILD_SHARED_LIBS OFF)
+    set(INSTALL_STATIC_LIBS OFF CACHE BOOL "Install libchdr static libraries" FORCE)
+    set(WITH_SYSTEM_ZLIB ON CACHE BOOL "Use openhi2txt's selected zlib for libchdr" FORCE)
+    set(WITH_SYSTEM_ZSTD OFF CACHE BOOL "Use libchdr's bundled Zstandard decoder" FORCE)
+    set(CHDR_ENABLE_CD OFF CACHE BOOL "Enable libchdr CD/GD-ROM support" FORCE)
+    set(CHDR_WANT_RAW_DATA_SECTOR OFF CACHE BOOL "Reconstruct raw CD sectors" FORCE)
+    set(CHDR_WANT_SUBCODE OFF CACHE BOOL "Output CD subchannel data" FORCE)
+    set(BUILD_FUZZER OFF CACHE BOOL "Build libchdr's fuzz target" FORCE)
+    add_subdirectory(
+        "${OPENHI2TXT_THIRDPARTY_DIR}/libchdr"
+        "${CMAKE_CURRENT_BINARY_DIR}/thirdparty/libchdr"
+        EXCLUDE_FROM_ALL
+    )
+endfunction()
+openhi2txt_add_libchdr()
+target_link_libraries(openhi2txt PRIVATE chdr-static)
+if(WIN32 AND MSVC)
+    set_target_properties(chdr-static PROPERTIES VS_GLOBAL_VcpkgEnabled false VS_GLOBAL_VcpkgApplocalDeps false)
+    target_compile_definitions(chdr-static PRIVATE ZLIB_STATIC)
+endif()
+
+if(MSVC)
+    # The bundled static zlib uses zs.lib. Some transitive objects carry the
+    # conventional zlib.lib default-library directive; suppress that duplicate
+    # for every consumer of this static library.
+    target_link_options(openhi2txt INTERFACE /NODEFAULTLIB:zlib.lib)
+endif()
+
+if(WIN32)
+    target_link_libraries(openhi2txt PUBLIC ws2_32)
 endif()
 
 if(OPENHI2TXT_BUILD_CLI)
@@ -178,4 +222,50 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
     )
     add_test(NAME openhi2txt_open_extension_tests COMMAND openhi2txt_open_extension_tests)
+
+    add_executable(openhi2txt_input_planner_tests
+        tests/InputPlannerTests.cpp
+    )
+    target_link_libraries(openhi2txt_input_planner_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_input_planner_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_input_planner_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    add_test(NAME openhi2txt_input_planner_tests COMMAND openhi2txt_input_planner_tests)
+
+    add_executable(openhi2txt_live_protocol_tests
+        tests/LiveProtocolTests.cpp
+    )
+    target_link_libraries(openhi2txt_live_protocol_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_live_protocol_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_live_protocol_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    add_test(NAME openhi2txt_live_protocol_tests COMMAND openhi2txt_live_protocol_tests)
+
+    add_executable(openhi2txt_identity_resolution_tests
+        tests/IdentityResolutionTests.cpp
+    )
+    target_link_libraries(openhi2txt_identity_resolution_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_identity_resolution_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_identity_resolution_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+    )
+    if(MSVC)
+        set_target_properties(openhi2txt_identity_resolution_tests PROPERTIES
+            VS_GLOBAL_VcpkgEnabled false
+            VS_GLOBAL_VcpkgApplocalDeps false
+        )
+    endif()
+    add_test(NAME openhi2txt_identity_resolution_tests COMMAND openhi2txt_identity_resolution_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(openhi2txt_filesystem_tests tests/FilesystemTests.cpp)
+    target_link_libraries(openhi2txt_filesystem_tests PRIVATE openhi2txt)
+    target_include_directories(openhi2txt_filesystem_tests PRIVATE "${OPENHI2TXT_SRC_DIR}")
+    set_target_properties(openhi2txt_filesystem_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/tests"
+        VS_GLOBAL_VcpkgEnabled false VS_GLOBAL_VcpkgApplocalDeps false)
+    add_test(NAME openhi2txt_filesystem_tests COMMAND openhi2txt_filesystem_tests)
 endif()

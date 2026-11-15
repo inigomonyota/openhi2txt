@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -47,7 +50,10 @@ void printUsage() {
         "  -h: display help\n"
         "  <path>: game hi file to read\n"
         "\n"
-        "OpenHi2txt also accepts: --defs <xmls_path> --mame-root <mame_root> --game <romname>\n",
+        "OpenHi2txt also accepts:\n"
+        "  --defs <xmls_path> --mame-root <mame_root> --game <romname>\n"
+        "  --defs <xmls_path> --mame-root <mame_root> --machine <name>\n"
+        "      --software-list <list> --software <name> [--input <path>]\n",
         VersionString);
 }
 
@@ -139,6 +145,55 @@ int App::run(int argc, char** argv) {
     options.scoreGrouping = args.scoreGrouping;
     options.scoreGroupingSeparator = args.scoreGroupingSeparator;
     options.scoreGroupingSize = args.scoreGroupingSize;
+
+    if (!args.machine.empty()) {
+        ContextOptions contextOptions;
+        contextOptions.definitionsZip = args.defsZip.string();
+        contextOptions.mameRoot = args.mameRoot.string();
+        Context context(std::move(contextOptions));
+        const MameRuntimeIdentity identity{args.machine, args.softwareList, args.software};
+
+        HiScoreResult result;
+        if (args.inputPath.empty()) {
+            result = context.refreshGame(identity, options);
+        }
+        else {
+            const HiScoreInputPlanResult plan = context.planGameInputs(identity);
+            if (!plan.ok) {
+                std::fprintf(stderr, "%s\n", plan.error.c_str());
+                return 0;
+            }
+            std::set<std::string> sourceKinds;
+            for (const auto& input : plan.inputs) sourceKinds.insert(input.fileKind);
+            if (sourceKinds.size() != 1) {
+                std::fprintf(stderr,
+                    "ERROR: --input is ambiguous because the definition has multiple logical sources\n");
+                return 0;
+            }
+
+            std::ifstream input(args.inputPath, std::ios::binary);
+            if (!input) {
+                std::fprintf(stderr, "ERROR: unable to read input file: %s\n",
+                    args.inputPath.string().c_str());
+                return 0;
+            }
+            HiScoreInput bytes;
+            bytes.fileKind = *sourceKinds.begin();
+            bytes.bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            bytes.sourceName = args.inputPath.string();
+            result = context.decodeGame(identity, {std::move(bytes)}, options);
+        }
+
+        if (!result.ok) {
+            std::fprintf(stderr, "%s%s\n",
+                result.error.rfind("ERROR:", 0) == 0 ? "" : "ERROR: ", result.error.c_str());
+            if (args.xmlOutput && result.errorKind == HiScoreErrorKind::StructureNotMatched)
+                std::printf("<hi2txt>\n</hi2txt>\n");
+            return 0;
+        }
+        OutputPrinter::print(result, args.xmlOutput ? OutputFormat::Xml : OutputFormat::Text);
+        return 0;
+    }
 
     auto defRes = DefResolver::loadFromZip(args.defsZip, args.mameRoot, args.game, args.hiscoreDat, tracePtr);
     if (!defRes.ok) {

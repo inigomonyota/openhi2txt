@@ -31,3 +31,23 @@ platforms use the zlib supplied by the system or selected by CMake.
 
 Windows/MSVC builds link a bundled static x64 `/MD` library. Other supported
 platforms use the minizip supplied by the system or selected by CMake.
+
+## libchdr
+
+- Source: https://github.com/inigomonyota/libchdr
+- Upstream: https://github.com/rtissera/libchdr
+- Copyright: Romain Tisserand and contributors
+- License: BSD 3-Clause License
+- License text: `thirdparty/libchdr/LICENSE.txt`
+
+OpenHi2txt pins a fork of libchdr and builds it statically with its optional
+CD/GD-ROM support disabled. General-purpose CHD codecs remain enabled.
+
+The pinned libchdr source includes these additional decoder components:
+
+- LZMA SDK 25.01, placed in the public domain; notice at
+  `thirdparty/libchdr/deps/lzma-25.01/LICENSE`
+- Zstandard 1.5.7 decompressor, available under its BSD-style license or GPLv2;
+  licensing notice retained in `thirdparty/libchdr/deps/zstd-1.5.7/zstddeclib.c`
+- dr_flac, available under the public domain dedication or MIT-0;
+  license text retained in `thirdparty/libchdr/include/dr_libs/dr_flac.h`

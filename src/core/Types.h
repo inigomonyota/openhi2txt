@@ -18,6 +18,7 @@ enum class FormatKind {
     DivideTrunc,   // int division
     DivideRound,   // rounded int division
     Shift,         // logical left shift
+    BitCount,      // number of set bits
     Round,
     Trunc,
     LoopIndex
@@ -208,8 +209,20 @@ struct CheckDef {
     std::vector<uint8_t> bytes;
 };
 
+struct DecodeRegion {
+    std::string type;
+    uint64_t offset = 0;
+    uint64_t size = 0;
+};
+
 struct Structure {
+    std::string filesystem;
+    unsigned partition = 0;
+    std::vector<Structure> sources;
     std::string fileKind = ".hi";
+    uint64_t inputOffset = 0;
+    uint64_t inputLength = 0;
+    bool hasInputWindow = false;
     int byteSwap = 0;
     std::vector<int> checkSizes;
 
@@ -218,6 +231,7 @@ struct Structure {
     std::vector<CheckDef> checkAll; // AND
     std::vector<CheckDef> checkAny; // OR (legacy inline)
     std::vector<std::string> hiscoreDefinitionTokens;
+    std::vector<DecodeRegion> decodeRegions;
     std::vector<StructureItem> items;
 };
 
@@ -229,13 +243,33 @@ enum class SourceRowKind {
 struct Column {
     std::string id, src, format, display;
     SourceRowKind sourceRow = SourceRowKind::Current;
+    bool headerVisible = true;
 };
 struct IgnoreRule { std::string colId; std::string value; };
 enum class IgnoreOp { And, Or };
 
+struct RankedPointsSource {
+    std::string src;
+    int maxPoints = 0;
+};
+
+struct RankedPointsDef {
+    bool enabled = false;
+    std::string nameColumn = "NAME";
+    std::string pointsColumn = "POINTS";
+    std::vector<RankedPointsSource> sources;
+};
+
+struct SortKeyDef {
+    std::string src;
+    std::string order;
+    std::string format;
+};
+
 struct Table {
     std::string id;
     std::string display; // always|extra|debug
+    bool showEmpty = false;
     std::string lineIgnoreRaw;
     std::vector<IgnoreRule> ignoreRules;
     IgnoreOp ignoreOp = IgnoreOp::And;
@@ -244,8 +278,11 @@ struct Table {
     std::string sortKey;
     std::string sortOrder;
     std::string sortFormat;
+    std::vector<SortKeyDef> sortKeys;
 
     int linesMax = 0;
+
+    RankedPointsDef rankedPoints;
 
     std::vector<Column> cols;
 };
@@ -270,12 +307,26 @@ struct OutputItemRef {
 
 struct OutputDef {
     std::string id;            // "" = default
+    std::string sortMethod;    // empty/default or midway (openhi2txt extension)
     std::vector<Table> tables; // tables inside that <output>
     std::vector<Column> fields;
     std::vector<OutputItemRef> items;
 };
 
 struct GameDef {
+    struct Identity {
+        std::string type;
+        std::string machine;
+        std::string softwareList;
+        std::string software;
+    };
+
+    // OpenHi2txt definitions may declare a stable ID and one or more
+    // external identities. Legacy hi2txt definitions leave these empty and
+    // continue to be resolved by archive-entry name.
+    std::string id;
+    std::vector<Identity> identities;
+
     std::vector<Structure> structures;
     std::unordered_map<std::string, FormatDef> formats;
     std::unordered_map<std::string, Charset> charsets;

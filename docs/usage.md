@@ -41,22 +41,22 @@ openhi2txt::HiScoreResult result = context.readGame("galaga", read);
 ```
 
 `definitionsZip` should point to the ZIP containing hi2txt XML definitions.
-`mameRoot` should point to the MAME folder containing `hiscore`, `nvram`, and
-optionally `plugins/hiscore/hiscore.dat`.
+`mameRoot` should point to the MAME folder containing `hiscore`, `nvram`,
+`diff`, and `roms`, and optionally `plugins/hiscore/hiscore.dat`.
 `defaultsZip` and `scoresDirectory` provide persisted, already-rendered display
 tables for fast frontend reads.
 
 ## Source Priority
 
 `readGame()` is intended for fast frontend display reads. It does not inspect
-live `.hi` or nvram data. It returns the best persisted display source in this
+live `.hi`, NVRAM, or DIF-backed data. It returns the best persisted display source in this
 order:
 
 1. Saved rendered score XML under `scoresDirectory`
 2. Default rendered score XML from `defaultsZip`
 
 `refreshGame()` is intended for controlled update moments, such as after a user
-exits a game. It reads live `.hi` or nvram data under `mameRoot` using
+exits a game. It reads live `.hi`, NVRAM, or DIF-backed data under `mameRoot` using
 `definitionsZip`. If decoding succeeds, it returns the live result and writes a
 rendered XML snapshot to `scoresDirectory/<game>.xml` when `scoresDirectory` is
 set.
@@ -76,7 +76,7 @@ openhi2txt::ScoreSource::DefaultFallback
 openhi2txt::ScoreSource::None
 ```
 
-If live `.hi` or nvram data exists but cannot be matched or decoded, OpenHi2txt
+If live `.hi`, NVRAM, or DIF-backed data exists but cannot be matched or decoded, OpenHi2txt
 does not write a saved score XML. The caller can keep its existing in-memory
 display entry and call `readGame()` separately if it wants to reload persisted
 data.
@@ -114,7 +114,7 @@ opts.defaultsZip = "path/to/hi2txt_defaults.zip";
 ```
 
 With no `scoresDirectory`, `readGame()` reads only defaults. `refreshGame()`
-can still read live `.hi` or nvram data, but no saved XML writeback is attempted.
+can still read live `.hi`, NVRAM, or DIF-backed data, but no saved XML writeback is attempted.
 
 ## Defaults
 
@@ -210,9 +210,135 @@ if (result.ok) {
 }
 ```
 
-If the live `.hi` or nvram data contains a valid score table, the saved score
-XML is updated and the returned result contains the live data. If not, no saved
-XML is written and the frontend can keep its existing cached display entry.
+For bytes obtained without reading MAME's files, such as a live IPC snapshot,
+pass one or more named inputs directly:
+
+```cpp
+std::vector<openhi2txt::HiScoreInput> inputs{
+    { ".hi", hiscoreBytes, "mame://current-session/hiscore" }
+};
+
+auto result = context.decodeGame(gameName, inputs, read);
+if (result.ok) {
+    scoreCache[gameName] = std::move(result);
+}
+```
+
+`fileKind` matches the definition's `structure@file`; empty and `hi` are
+accepted as aliases for `.hi`. Multiple inputs allow a definition to combine,
+for example, `.hi` and NVRAM data through the same merge path used for files.
+For `file="dif"`, supply the logical byte window requested by the structure,
+not a CHD or DIF container. `decodeGame()` does not write `scoresDirectory`;
+the caller controls how frequently live results are cached.
+
+### Planning live watch ranges
+
+For a live MAME session, use the identity reported by MAME rather than deriving
+the definition name in the frontend:
+
+```cpp
+openhi2txt::MameRuntimeIdentity identity{
+    "genesis", "megadriv", "sor2u"
+};
+
+auto plan = context.planGameInputs(identity);
+```
+
+OpenHi2txt resolves this identity through an explicit `<identity>` declaration
+in a definition. The definition filename and public `id` need not be derived
+from any of these three fields. Existing definitions without identity metadata
+retain the compatibility fallback `<machine>_<software>.xml`; machine-only
+launches retain `<machine>.xml`. The same identity overloads are available for
+reading, refreshing, full-buffer decoding, sparse decoding, and input/default
+checks. String overloads remain available when the caller already has an
+explicit definition key.
+
+For example:
+
+```xml
+<!DOCTYPE openhi2txt>
+<openhi2txt requires="0.5.0" id="genesis_tecmobb">
+  <identity type="mame" machine="genesis"
+            software-list="megadriv" software="tecmobb"/>
+  <structure file="sram">
+    <!-- normal hi2txt structure -->
+  </structure>
+  <!-- normal formats, charsets, and output -->
+</openhi2txt>
+```
+
+The frontend supplies facts; it does not choose `genesis_tecmobb`. For static
+software-list NVRAM, `refreshGame(identity)` reads MAME's confirmed path
+`nvram/<machine>/<software>.nv` and presents it to the definition under its
+logical `structure@file` name.
+
+### Complete MAME live client
+
+Applications can let OpenHi2txt own the localhost protocol, reconnection,
+identity negotiation, watch planning, sparse reconstruction, and decoding:
+
+```cpp
+#include <openhi2txt/mame_live.h>
+
+openhi2txt::MameLiveOptions liveOptions;
+liveOptions.expectedIdentity = {"genesis", "megadriv", "sor2u"};
+liveOptions.storageHints.push_back({"sram", 16384});
+
+openhi2txt::MameLiveClient live(
+    context,
+    std::move(liveOptions),
+    [](openhi2txt::MameLiveUpdate update) {
+        // update.result is already decoded into tables.
+        // update.reason distinguishes the initial baseline from later changes.
+    });
+
+live.start();
+// Keep both context and live alive while MAME is running.
+live.stop();
+```
+
+Callbacks run on the client's worker thread. The `Context` passed to the client
+must outlive it; destroy the client from its owning thread, not from inside an
+update callback. The client connects only to `127.0.0.1`, validates payload
+sizes and requested ranges, suppresses duplicate session/sequence snapshots,
+and reconnects automatically when either program starts first or restarts.
+
+Before asking MAME to observe a live source, obtain the conservative watch
+plan derived from the resolved XML definition:
+
+```cpp
+auto plan = context.planGameInputs(gameName);
+if (plan.ok) {
+    for (const auto& input : plan.inputs) {
+        // input.fileKind identifies the persistent source.
+        // input.watchRanges contains the offsets MAME needs to observe.
+    }
+}
+```
+
+There is one `HiScoreInputPlan` for each alternative `<structure>`. Declared
+sizes and output IDs are retained so the live integration can select the
+appropriate alternative. Each range includes all bytes that can affect output,
+including structure checks, loop stop conditions, table placement, sorting,
+filtering, referenced formatting operands, and hidden values whose validation
+can reject the complete snapshot. Adjacent ranges are coalesced.
+
+For `.hi` files and ordinary EEPROM/SRAM/NVRAM sources, watch only these ranges
+and return the complete contents of every range after they stabilize. Pass the
+offset-addressed ranges to `decodeSparseGame()`. It fills bytes outside the
+planned ranges with zero and then uses the same decoder path as `decodeGame()`.
+Each sparse snapshot should contain every planned range so it is independently
+decodable after startup or reconnection.
+
+For DIF/CHD definitions, range offsets are absolute logical-disk offsets and
+`sourceWindowOffset`/`sourceWindowLength` identify the XML-defined decoder
+window. Set the sparse input's `sourceOffset` and `sourceSize` to that window;
+the complete disk is never materialized or transmitted.
+
+When `refreshGame()` finds a valid score table in file-backed `.hi`, NVRAM, or
+DIF data, it updates the saved score XML and returns the decoded data. If not,
+no saved XML is written and the frontend can keep its existing cached display
+entry.
 
 ## Result Shape
 
@@ -277,6 +403,11 @@ table.columnInfo;
 field.source;
 field.display;
 ```
+
+Definitions using the OpenHi2txt `column@header="false"` extension retain the
+column values but place an empty string in the corresponding
+`table.columns` position. The matching `table.columnInfo` entry still exposes
+the column ID and source.
 
 Display levels:
 
@@ -372,3 +503,21 @@ paths used, XML loading, structure matching, bytes consumed by each structure
 element, selected output, and displayed fields. `-rd` also enables trace.
 `-notrace` disables trace again. Trace is a CLI feature and is not exposed in
 the public library API.
+
+## Filesystem-backed score inputs (0.6.0)
+
+`refreshGame()` can resolve ext2 paths inside a DIF-backed logical disk. Definitions
+use `structure file="dif" filesystem="ext2" partition="1"` with nested `source`
+elements (see the XML reference and `examples/carnking.xml`). This avoids stale
+offsets when a save relocates its files. Each refresh opens the disk read-only and
+resolves current directory entries and inode block pointers. Source failures do
+not persist partial results.
+
+`planGameInputs()`, `decodeGame()` and `decodeSparseGame()` currently reject
+filesystem definitions with an explicit error. Static live watch ranges cannot
+represent changing file allocations. Use file-backed refresh after game exit.
+
+Filesystem implementations share `FilesystemReader::readFile()` and receive a
+bounded logical-disk read callback. New filesystem types can be added behind the
+factory without changing the CHD reader or score-record decoder; extend XML
+validation alongside the factory when adding a type.

@@ -7,6 +7,9 @@ namespace openhi2txt {
 class StructureSelector {
 public:
     static std::vector<uint8_t> applyStructByteSwap(const std::vector<uint8_t>& raw, int byteSwap);
+    static std::vector<uint8_t> applyDecodeRegions(
+        const std::vector<uint8_t>& raw,
+        const std::vector<DecodeRegion>& regions);
 
     // Select which Structure to use among candidates for a given raw buffer.
     // Matches hi2txt-ish selection rules:

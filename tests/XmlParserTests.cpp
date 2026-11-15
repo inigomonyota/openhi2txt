@@ -68,7 +68,39 @@ int main() {
     unknownAttributeXml.insert(unknownAttributeXml.find(" label="), " unknown=\"value\"");
     const auto unknownAttribute = XmlParser::parseWithDiagnostics(unknownAttributeXml);
     expect(!unknownAttribute.ok && unknownAttribute.errorKind == XmlParseErrorKind::Schema,
-           "openhi2txt currently accepts only inherited root attributes plus requires");
+           "openhi2txt rejects undeclared root attributes");
+
+    const std::string identityXml =
+        "<!DOCTYPE openhi2txt><openhi2txt requires=\"" + std::string(VersionString) +
+        "\" id=\"genesis_tecmobb\"><identity type=\"mame\" machine=\"genesis\" "
+        "software-list=\"megadriv\" software=\"tecmobb\"/></openhi2txt>";
+    const auto identity = XmlParser::parseWithDiagnostics(identityXml);
+    expect(identity.ok, "an openhi2txt definition accepts a MAME identity");
+    expect(identity.def.id == "genesis_tecmobb" && identity.def.identities.size() == 1,
+           "definition identity metadata is retained");
+    if (!identity.def.identities.empty()) {
+        expect(identity.def.identities.front().machine == "genesis" &&
+               identity.def.identities.front().softwareList == "megadriv" &&
+               identity.def.identities.front().software == "tecmobb",
+               "all structured MAME identity fields are parsed");
+    }
+
+    const auto missingIdentityId = XmlParser::parseWithDiagnostics(
+        openDefinition(VersionString, "<identity type=\"mame\" machine=\"pacman\"/>"));
+    expect(!missingIdentityId.ok && missingIdentityId.errorKind == XmlParseErrorKind::Schema,
+           "an identity-aware definition requires a stable id");
+
+    const auto unsafeIdentityId = XmlParser::parseWithDiagnostics(
+        "<!DOCTYPE openhi2txt><openhi2txt requires=\"" + std::string(VersionString) +
+        "\" id=\"../outside\"><identity type=\"mame\" machine=\"genesis\" "
+        "software-list=\"megadriv\" software=\"tecmobb\"/></openhi2txt>");
+    expect(!unsafeIdentityId.ok && unsafeIdentityId.errorKind == XmlParseErrorKind::Schema,
+           "definition ids cannot escape the persisted-score directory");
+
+    const auto legacyIdentity = XmlParser::parseWithDiagnostics(
+        "<!DOCTYPE hi2txt><hi2txt><identity type=\"mame\" machine=\"pacman\"/></hi2txt>");
+    expect(!legacyIdentity.ok && legacyIdentity.errorKind == XmlParseErrorKind::Schema,
+           "identity metadata is restricted to the openhi2txt root");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed.\n";
